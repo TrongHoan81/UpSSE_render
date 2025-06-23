@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Công cụ đồng bộ SSE</title>
+    <!-- Include Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+
+    <div class="w-full max-w-2xl bg-white rounded-lg shadow-xl p-8">
+        <!-- Header -->
+        <div class="flex items-center justify-center space-x-4 mb-6">
+            <img src="{{ url_for('static', filename='Logo.png') }}" alt="Logo Công Ty" class="h-24">
+            <div class="text-center">
+                <h2 class="text-2xl font-bold text-red-600">CÔNG TY CỔ PHẦN XĂNG DẦU</h2>
+                <h2 class="text-2xl font-bold text-red-600">DẦU KHÍ NAM ĐỊNH</h2>
+            </div>
+        </div>
+        
+        <h1 class="text-3xl font-bold text-center text-blue-700 mb-8">Công cụ đồng bộ dữ liệu SSE</h1>
+
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="mb-4 p-4 rounded-md 
+                        {% if category == 'danger' %} bg-red-100 border border-red-400 text-red-700
+                        {% elif category == 'warning' %} bg-yellow-100 border border-yellow-400 text-yellow-700
+                        {% else %} bg-green-100 border border-green-400 text-green-700
+                        {% endif %}" role="alert">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+
+        <!-- Upload Form -->
+        <form action="{{ url_for('process') }}" method="post" enctype="multipart/form-data" class="space-y-6">
+            <!-- Dropdown for CHXD -->
+            <div>
+                <label for="chxd" class="block text-lg font-medium text-gray-700 mb-2">1. Chọn Cửa Hàng Xăng Dầu (CHXD):</label>
+                <select id="chxd" name="chxd" required class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+                    <option value="" disabled selected>-- Vui lòng chọn --</option>
+                    {% for item in chxd_list %}
+                        <option value="{{ item }}">{{ item }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- File Uploader -->
+            <div>
+                <label for="file" class="block text-lg font-medium text-gray-700 mb-2">2. Tải lên file bảng kê hóa đơn:</label>
+                <input type="file" name="file" id="file" required class="block w-full text-sm text-gray-500
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-md file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-indigo-50 file:text-indigo-700
+                    hover:file:bg-indigo-100
+                ">
+            </div>
+
+            <!-- Submit Button -->
+            <div>
+                <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-lg font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                    Xử lý và Tải xuống
+                </button>
+            </div>
+        </form>
+
+        <!-- Footer -->
+        <div class="mt-8 border-t pt-4 text-center">
+            <p class="text-sm text-gray-600">Nếu gặp khó khăn, vui lòng liên hệ Nguyễn Trọng Hoàn - 0902069469.</p>
+        </div>
+    </div>
+
+</body>
+</html>
