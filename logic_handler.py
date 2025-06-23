@@ -5,9 +5,6 @@ from datetime import datetime
 import re
 import io
 
-# Các hàm này được sao chép và điều chỉnh từ file streamlit_app.py gốc của bạn.
-# Chúng ta giữ nguyên logic cốt lõi mà bạn đã phát triển.
-
 # --- Các hàm trợ giúp ---
 def to_float(value):
     try:
@@ -129,22 +126,30 @@ def create_tmt_row(original_row, tmt_value, details):
 
 # --- Hàm xử lý chính ---
 def process_excel_file(uploaded_file_content, static_data, selected_chxd):
-    """
-    Hàm chính để xử lý file Excel.
-    Nhận nội dung file đã tải lên, dữ liệu tĩnh, và CHXD đã chọn.
-    Trả về một đối tượng BytesIO chứa file Excel kết quả.
-    """
     try:
-        # Làm sạch file đầu vào bằng pandas-calamine
-        df = pd.read_excel(io.BytesIO(uploaded_file_content), engine='calamine', header=None)
+        # --- LOGIC LÀM SẠCH FILE MỚI (KHÔNG DÙNG CALAMINE) ---
+        # 1. Đọc file người dùng tải lên ở chế độ chỉ đọc để tránh lỗi định dạng
+        source_wb = load_workbook(filename=io.BytesIO(uploaded_file_content), read_only=True)
+        source_ws = source_wb.active
+
+        # 2. Tạo một workbook mới trong bộ nhớ
+        cleaned_wb = Workbook()
+        cleaned_ws = cleaned_wb.active
+
+        # 3. Sao chép dữ liệu (chỉ giá trị) từ file cũ sang file mới
+        #    Thao tác này sẽ loại bỏ tất cả các định dạng lỗi
+        for row in source_ws.iter_rows():
+            cleaned_ws.append(cell.value for cell in row)
+
+        # 4. Lưu workbook đã sạch vào một buffer trong bộ nhớ
         cleaned_buffer = io.BytesIO()
-        df.to_excel(cleaned_buffer, index=False, header=False, engine='openpyxl')
+        cleaned_wb.save(cleaned_buffer)
         cleaned_buffer.seek(0)
+        # --- KẾT THÚC LOGIC LÀM SẠCH ---
 
+        # Từ bây giờ, chúng ta sẽ sử dụng 'cleaned_buffer' để xử lý
         source_df = pd.read_excel(cleaned_buffer, header=None, skiprows=4)
-        cleaned_buffer.seek(0)
-
-        # Bắt đầu xử lý logic chính
+        
         chxd_details = static_data["chxd_detail_map"].get(selected_chxd)
         if not chxd_details:
             raise ValueError(f"Không tìm thấy thông tin chi tiết cho CHXD: '{selected_chxd}'")
@@ -250,5 +255,4 @@ def process_excel_file(uploaded_file_content, static_data, selected_chxd):
 
     except Exception as e:
         print(f"Error during processing: {e}")
-        # Trả về lỗi để Flask có thể xử lý
         raise e
