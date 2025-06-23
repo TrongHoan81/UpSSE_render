@@ -5,6 +5,9 @@ from datetime import datetime
 import re
 import io
 
+# Các hàm này được sao chép và điều chỉnh từ file streamlit_app.py gốc của bạn.
+# Chúng ta giữ nguyên logic cốt lõi mà bạn đã phát triển.
+
 # --- Các hàm trợ giúp ---
 def to_float(value):
     try:
@@ -126,30 +129,22 @@ def create_tmt_row(original_row, tmt_value, details):
 
 # --- Hàm xử lý chính ---
 def process_excel_file(uploaded_file_content, static_data, selected_chxd):
+    """
+    Hàm chính để xử lý file Excel.
+    Nhận nội dung file đã tải lên, dữ liệu tĩnh, và CHXD đã chọn.
+    Trả về một đối tượng BytesIO chứa file Excel kết quả.
+    """
     try:
-        # --- LOGIC LÀM SẠCH FILE MỚI (KHÔNG DÙNG CALAMINE) ---
-        # 1. Đọc file người dùng tải lên ở chế độ chỉ đọc để tránh lỗi định dạng
-        source_wb = load_workbook(filename=io.BytesIO(uploaded_file_content), read_only=True)
-        source_ws = source_wb.active
-
-        # 2. Tạo một workbook mới trong bộ nhớ
-        cleaned_wb = Workbook()
-        cleaned_ws = cleaned_wb.active
-
-        # 3. Sao chép dữ liệu (chỉ giá trị) từ file cũ sang file mới
-        #    Thao tác này sẽ loại bỏ tất cả các định dạng lỗi
-        for row in source_ws.iter_rows():
-            cleaned_ws.append(cell.value for cell in row)
-
-        # 4. Lưu workbook đã sạch vào một buffer trong bộ nhớ
+        # Làm sạch file đầu vào bằng pandas-calamine
+        df = pd.read_excel(io.BytesIO(uploaded_file_content), engine='calamine', header=None)
         cleaned_buffer = io.BytesIO()
-        cleaned_wb.save(cleaned_buffer)
+        df.to_excel(cleaned_buffer, index=False, header=False, engine='openpyxl')
         cleaned_buffer.seek(0)
-        # --- KẾT THÚC LOGIC LÀM SẠCH ---
 
-        # Từ bây giờ, chúng ta sẽ sử dụng 'cleaned_buffer' để xử lý
         source_df = pd.read_excel(cleaned_buffer, header=None, skiprows=4)
-        
+        cleaned_buffer.seek(0)
+
+        # Bắt đầu xử lý logic chính
         chxd_details = static_data["chxd_detail_map"].get(selected_chxd)
         if not chxd_details:
             raise ValueError(f"Không tìm thấy thông tin chi tiết cho CHXD: '{selected_chxd}'")
@@ -164,6 +159,7 @@ def process_excel_file(uploaded_file_content, static_data, selected_chxd):
             new_row = [row[i] for i in vi_tri_cu_idx]
             if pd.notna(new_row[3]):
                 try:
+                    # <<< SỬA ĐỔI VẤN ĐỀ 2 (PHẦN NGUYÊN NHÂN): Đổi định dạng ngày tháng đầu vào để nhất quán
                     new_row[3] = pd.to_datetime(new_row[3]).strftime('%Y-%m-%d')
                 except (ValueError, TypeError): pass
             new_row.append("No" if pd.isna(new_row[4]) or len(clean_string(str(new_row[4]))) > 9 else "Yes")
@@ -188,12 +184,14 @@ def process_excel_file(uploaded_file_content, static_data, selected_chxd):
             upsse_row[1], upsse_row[2] = clean_string(str(row[5])), row[3]
             b_orig, c_orig = clean_string(str(row[1])), clean_string(str(row[2]))
             
-            if c_orig and len(c_orig) >= 6:
-                if details['b5_val'] == "Nguyễn Huệ": upsse_row[3] = f"HN{c_orig[-6:]}"
-                elif details['b5_val'] == "Mai Linh": upsse_row[3] = f"MM{c_orig[-6:]}"
-                else: upsse_row[3] = f"{b_orig[-2:]}{c_orig[-6:]}"
+            # <<< SỬA ĐỔI VẤN ĐỀ 2: Xóa bỏ điều kiện `if c_orig and len(c_orig) >= 6:`
+            # Điều này đảm bảo cột D ("Số hóa đơn") luôn được tính toán, giống như trong streamlit_app.py
+            if details['b5_val'] == "Nguyễn Huệ": upsse_row[3] = f"HN{c_orig[-6:]}"
+            elif details['b5_val'] == "Mai Linh": upsse_row[3] = f"MM{c_orig[-6:]}"
+            else: upsse_row[3] = f"{b_orig[-2:]}{c_orig[-6:]}"
 
             upsse_row[4] = f"1{b_orig}" if b_orig else ''
+            # Logic cột F sẽ tự động đúng khi cột D đã có dữ liệu
             upsse_row[5] = f"Xuất bán lẻ theo hóa đơn số {upsse_row[3]}"
             product_name = clean_string(str(row[8]))
             upsse_row[6] = details['lookup_table'].get(product_name.lower(), '')
@@ -235,14 +233,25 @@ def process_excel_file(uploaded_file_content, static_data, selected_chxd):
         output_ws = output_wb.active
         for r_data in final_rows: output_ws.append(r_data)
 
+        # <<< SỬA ĐỔI VẤN ĐỀ 1: Sửa logic định dạng ngày tháng
+        # Thay thế vòng lặp cũ bằng vòng lặp mới đảm bảo style được áp dụng đúng
         date_style = NamedStyle(name="date_style", number_format='DD/MM/YYYY')
-        for cell in output_ws['C']:
+        # Bắt đầu từ dòng 6 để bỏ qua headers
+        for row_index in range(6, output_ws.max_row + 1):
+            cell = output_ws[f'C{row_index}']
             if isinstance(cell.value, str):
-                try: cell.value = datetime.strptime(cell.value, '%Y-%m-%d').date()
-                except ValueError: pass
-            if isinstance(cell.value, datetime):
+                try:
+                    # Chuyển chuỗi YYYY-MM-DD thành đối tượng datetime
+                    date_obj = datetime.strptime(cell.value, '%Y-%m-%d')
+                    cell.value = date_obj # Gán lại giá trị cho ô
+                    cell.style = date_style # Áp dụng style ngay lập tức
+                except ValueError:
+                    # Nếu chuyển đổi thất bại, giữ nguyên giá trị
+                    pass
+            elif isinstance(cell.value, datetime):
+                 # Nếu đã là datetime object, chỉ cần áp dụng style
                 cell.style = date_style
-        
+
         output_ws.column_dimensions['B'].width = 35
         output_ws.column_dimensions['C'].width = 12
         output_ws.column_dimensions['D'].width = 12
@@ -255,4 +264,5 @@ def process_excel_file(uploaded_file_content, static_data, selected_chxd):
 
     except Exception as e:
         print(f"Error during processing: {e}")
+        # Trả về lỗi để Flask có thể xử lý
         raise e
