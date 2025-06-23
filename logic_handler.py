@@ -5,10 +5,7 @@ from datetime import datetime
 import re
 import io
 
-# Các hàm này được sao chép và điều chỉnh từ file streamlit_app.py gốc của bạn.
-# Chúng ta giữ nguyên logic cốt lõi mà bạn đã phát triển.
-
-# --- Các hàm trợ giúp ---
+# --- Các hàm trợ giúp (Không thay đổi) ---
 def to_float(value):
     try:
         if isinstance(value, str):
@@ -22,7 +19,7 @@ def clean_string(s):
         return ""
     return re.sub(r'\s+', ' ', str(s)).strip()
 
-# --- Hàm đọc dữ liệu tĩnh ---
+# --- Hàm đọc dữ liệu tĩnh (Không thay đổi) ---
 def get_static_data_from_excel(file_path):
     try:
         wb = load_workbook(file_path, data_only=True)
@@ -67,8 +64,9 @@ def get_static_data_from_excel(file_path):
         print(f"Error reading static data: {e}")
         return None
 
-# --- Các hàm xử lý dòng ---
-def add_summary_row(data_product, source_df, product_name, details):
+# --- <<< SỬA ĐỔI: Hàm xử lý dòng tổng hợp ---
+# Sửa lại để dùng trực tiếp worksheet từ openpyxl thay vì pandas DataFrame
+def add_summary_row(data_product, bkhd_source_ws, product_name, details):
     headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
     new_row = [''] * len(headers)
     new_row[0] = details['g5_val']
@@ -94,9 +92,9 @@ def add_summary_row(data_product, source_df, product_name, details):
     new_row[12] = total_qty
     new_row[13] = max((to_float(r[13]) for r in data_product), default=0.0)
 
-    filtered_df = source_df[(source_df[5].astype(str) == "Người mua không lấy hóa đơn") & (source_df[8].astype(str) == product_name)]
-    tien_hang_hd = filtered_df[13].apply(to_float).sum()
-    tienthue_hd = filtered_df[14].apply(to_float).sum()
+    # Lấy dữ liệu từ worksheet bằng vòng lặp, giống hệt streamlit_app.py
+    tien_hang_hd = sum(to_float(r[13]) for r in bkhd_source_ws.iter_rows(min_row=5, values_only=True) if clean_string(str(r[5])) == "Người mua không lấy hóa đơn" and clean_string(str(r[8])) == product_name)
+    tienthue_hd = sum(to_float(r[14]) for r in bkhd_source_ws.iter_rows(min_row=5, values_only=True) if clean_string(str(r[5])) == "Người mua không lấy hóa đơn" and clean_string(str(r[8])) == product_name)
     
     price_per_liter = {"Xăng E5 RON 92-II": 1900, "Xăng RON 95-III": 2000, "Dầu DO 0,05S-II": 1000, "Dầu DO 0,001S-V": 1000}.get(product_name, 0)
     new_row[14] = tien_hang_hd - round(total_qty * price_per_liter, 0)
@@ -127,42 +125,40 @@ def create_tmt_row(original_row, tmt_value, details):
         if idx < len(tmt_row): tmt_row[idx] = ''
     return tmt_row
 
-# --- Hàm xử lý chính ---
+# --- <<< SỬA ĐỔI: Hàm xử lý chính ---
 def process_excel_file(uploaded_file_content, static_data, selected_chxd):
-    """
-    Hàm chính để xử lý file Excel.
-    Nhận nội dung file đã tải lên, dữ liệu tĩnh, và CHXD đã chọn.
-    Trả về một đối tượng BytesIO chứa file Excel kết quả.
-    """
     try:
-        # Làm sạch file đầu vào bằng pandas-calamine
-        df = pd.read_excel(io.BytesIO(uploaded_file_content), engine='calamine', header=None)
-        cleaned_buffer = io.BytesIO()
-        df.to_excel(cleaned_buffer, index=False, header=False, engine='openpyxl')
-        cleaned_buffer.seek(0)
-
-        source_df = pd.read_excel(cleaned_buffer, header=None, skiprows=4)
-        cleaned_buffer.seek(0)
-
+        # Thay thế hoàn toàn logic đọc file bằng pandas/calamine
+        # Giờ đây chúng ta dùng openpyxl, giống hệt file streamlit_app.py gốc
+        bkhd_wb = load_workbook(io.BytesIO(uploaded_file_content))
+        bkhd_ws = bkhd_wb.active
+        
         # Bắt đầu xử lý logic chính
         chxd_details = static_data["chxd_detail_map"].get(selected_chxd)
         if not chxd_details:
             raise ValueError(f"Không tìm thấy thông tin chi tiết cho CHXD: '{selected_chxd}'")
         
-        details = static_data | chxd_details
+        details = {**static_data, **chxd_details}
+
+        all_rows_from_bkhd = list(bkhd_ws.iter_rows(values_only=True))
+        source_data_rows = all_rows_from_bkhd[4:] # Dữ liệu bắt đầu từ dòng 5
 
         vi_tri_cu_idx = [0, 1, 2, 3, 4, 5, 7, 6, 8, 10, 11, 13, 14, 16]
         intermediate_data = []
-        for _, row_series in source_df.iterrows():
-            row = row_series.tolist()
+        for row in source_data_rows:
             if len(row) <= max(vi_tri_cu_idx): continue
             new_row = [row[i] for i in vi_tri_cu_idx]
-            if pd.notna(new_row[3]):
+            if new_row[3] and not isinstance(new_row[3], datetime):
                 try:
-                    # <<< SỬA ĐỔI VẤN ĐỀ 2 (PHẦN NGUYÊN NHÂN): Đổi định dạng ngày tháng đầu vào để nhất quán
-                    new_row[3] = pd.to_datetime(new_row[3]).strftime('%Y-%m-%d')
+                    # Cố gắng chuyển đổi sang datetime nếu là chuỗi
+                    new_row[3] = datetime.strptime(str(new_row[3])[:10], '%d-%m-%Y')
                 except (ValueError, TypeError): pass
-            new_row.append("No" if pd.isna(new_row[4]) or len(clean_string(str(new_row[4]))) > 9 else "Yes")
+            # Chuyển đổi datetime sang chuỗi YYYY-mm-dd để xử lý nhất quán
+            if isinstance(new_row[3], datetime):
+                 new_row[3] = new_row[3].strftime('%Y-%m-%d')
+            
+            ma_kh = clean_string(str(new_row[4]))
+            new_row.append("No" if not ma_kh or len(ma_kh) > 9 else "Yes")
             intermediate_data.append(new_row)
 
         if not intermediate_data:
@@ -184,14 +180,11 @@ def process_excel_file(uploaded_file_content, static_data, selected_chxd):
             upsse_row[1], upsse_row[2] = clean_string(str(row[5])), row[3]
             b_orig, c_orig = clean_string(str(row[1])), clean_string(str(row[2]))
             
-            # <<< SỬA ĐỔI VẤN ĐỀ 2: Xóa bỏ điều kiện `if c_orig and len(c_orig) >= 6:`
-            # Điều này đảm bảo cột D ("Số hóa đơn") luôn được tính toán, giống như trong streamlit_app.py
             if details['b5_val'] == "Nguyễn Huệ": upsse_row[3] = f"HN{c_orig[-6:]}"
             elif details['b5_val'] == "Mai Linh": upsse_row[3] = f"MM{c_orig[-6:]}"
             else: upsse_row[3] = f"{b_orig[-2:]}{c_orig[-6:]}"
 
             upsse_row[4] = f"1{b_orig}" if b_orig else ''
-            # Logic cột F sẽ tự động đúng khi cột D đã có dữ liệu
             upsse_row[5] = f"Xuất bán lẻ theo hóa đơn số {upsse_row[3]}"
             product_name = clean_string(str(row[8]))
             upsse_row[6] = details['lookup_table'].get(product_name.lower(), '')
@@ -220,7 +213,7 @@ def process_excel_file(uploaded_file_content, static_data, selected_chxd):
 
         for product, rows in no_invoice_rows.items():
             if rows:
-                summary_row = add_summary_row(rows, source_df, product, details)
+                summary_row = add_summary_row(rows, bkhd_ws, product, details)
                 final_rows.append(summary_row)
                 tmt_unit = details['tmt_lookup_table'].get(product.lower(), 0)
                 tmt_summary = create_tmt_row(summary_row, tmt_unit, details)
@@ -233,23 +226,17 @@ def process_excel_file(uploaded_file_content, static_data, selected_chxd):
         output_ws = output_wb.active
         for r_data in final_rows: output_ws.append(r_data)
 
-        # <<< SỬA ĐỔI VẤN ĐỀ 1: Sửa logic định dạng ngày tháng
-        # Thay thế vòng lặp cũ bằng vòng lặp mới đảm bảo style được áp dụng đúng
         date_style = NamedStyle(name="date_style", number_format='DD/MM/YYYY')
-        # Bắt đầu từ dòng 6 để bỏ qua headers
         for row_index in range(6, output_ws.max_row + 1):
             cell = output_ws[f'C{row_index}']
             if isinstance(cell.value, str):
                 try:
-                    # Chuyển chuỗi YYYY-MM-DD thành đối tượng datetime
                     date_obj = datetime.strptime(cell.value, '%Y-%m-%d')
-                    cell.value = date_obj # Gán lại giá trị cho ô
-                    cell.style = date_style # Áp dụng style ngay lập tức
-                except ValueError:
-                    # Nếu chuyển đổi thất bại, giữ nguyên giá trị
+                    cell.value = date_obj 
+                    cell.style = date_style 
+                except (ValueError, TypeError):
                     pass
             elif isinstance(cell.value, datetime):
-                 # Nếu đã là datetime object, chỉ cần áp dụng style
                 cell.style = date_style
 
         output_ws.column_dimensions['B'].width = 35
@@ -264,5 +251,4 @@ def process_excel_file(uploaded_file_content, static_data, selected_chxd):
 
     except Exception as e:
         print(f"Error during processing: {e}")
-        # Trả về lỗi để Flask có thể xử lý
         raise e
