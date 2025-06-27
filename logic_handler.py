@@ -65,10 +65,7 @@ def get_static_data_from_excel(file_path):
         return None
 
 # --- Hàm xử lý logic lõi (được tái sử dụng) ---
-# ******** START OF CHANGE 1 ********
-# Add a new parameter is_new_price_period
 def _generate_upsse_rows(source_data_rows, full_bkhd_ws, static_data, selected_chxd, is_new_price_period=False):
-# ******** END OF CHANGE 1 ********
     chxd_details = static_data["chxd_detail_map"].get(selected_chxd)
     if not chxd_details:
         raise ValueError(f"Không tìm thấy thông tin chi tiết cho CHXD: '{selected_chxd}'")
@@ -82,7 +79,6 @@ def _generate_upsse_rows(source_data_rows, full_bkhd_ws, static_data, selected_c
         new_row = [row[i] for i in vi_tri_cu_idx]
         if new_row[3] and not isinstance(new_row[3], datetime):
             try:
-                # Handle dd-mm-yyyy format from POS
                 new_row[3] = datetime.strptime(str(new_row[3]).split(' ')[0], '%d-%m-%Y')
             except (ValueError, TypeError): pass
         if isinstance(new_row[3], datetime):
@@ -137,10 +133,7 @@ def _generate_upsse_rows(source_data_rows, full_bkhd_ws, static_data, selected_c
 
     for product, rows in no_invoice_rows.items():
         if rows:
-            # ******** START OF CHANGE 2 ********
-            # Pass the new parameter down to the summary function
             summary_row = add_summary_row(rows, full_bkhd_ws, product, details, is_new_price_period=is_new_price_period)
-            # ******** END OF CHANGE 2 ********
             final_rows.append(summary_row)
             tmt_unit = details['tmt_lookup_table'].get(product.lower(), 0)
             tmt_summary = create_tmt_row(summary_row, tmt_unit, details)
@@ -181,34 +174,45 @@ def process_file_with_price_periods(uploaded_file_content, static_data, selected
         new_price_rows = []
         
         if price_periods == '1':
+            # Nếu chỉ có 1 giai đoạn giá, tất cả các dòng đều thuộc giai đoạn "giá cũ" (mặc định)
             old_price_rows = all_source_rows
-        else: # price_periods == '2'
-            split_found = False
-            invoice_col_idx = 2 # Column C is 'Số' (invoice number)
-            for row in all_source_rows:
+        else:
+            # ******** START OF CHANGE ********
+            # Logic mới để tách giai đoạn giá
+            split_index = -1
+            invoice_col_idx = 2  # Cột C là cột "Số" hóa đơn
+
+            # Tìm vị trí (index) của dòng chứa hóa đơn giá mới
+            for i, row in enumerate(all_source_rows):
                 if len(row) > invoice_col_idx and row[invoice_col_idx] is not None:
                     current_invoice = clean_string(str(row[invoice_col_idx]))
-                    if not split_found and current_invoice == new_price_invoice_number:
-                        split_found = True
-                
-                if split_found:
-                    new_price_rows.append(row)
-                else:
-                    old_price_rows.append(row)
+                    if current_invoice == new_price_invoice_number:
+                        split_index = i
+                        break
             
-            if not split_found:
+            if split_index == -1:
+                # Nếu không tìm thấy số hóa đơn, báo lỗi
                 raise ValueError(f"Không tìm thấy số hóa đơn '{new_price_invoice_number}' để chia giai đoạn giá.")
 
-        # ******** START OF CHANGE 3 ********
-        # Call the processing function with the correct flag for each period
-        processed_rows_old = _generate_upsse_rows(old_price_rows, bkhd_ws, static_data, selected_chxd, is_new_price_period=False)
+            # Tách danh sách dựa trên vị trí đã tìm thấy
+            # Giá mới: từ đầu danh sách đến hết dòng chứa số hóa đơn
+            new_price_rows = all_source_rows[:split_index + 1]
+            # Giá cũ: từ ngay sau dòng chứa số hóa đơn đến cuối danh sách
+            old_price_rows = all_source_rows[split_index + 1:]
+            # ******** END OF CHANGE ********
+
+        # ******** START OF CHANGE ********
+        # Đảo ngược thứ tự xử lý và gộp để giữ đúng thứ tự file gốc (mới trên, cũ dưới)
         processed_rows_new = _generate_upsse_rows(new_price_rows, bkhd_ws, static_data, selected_chxd, is_new_price_period=True)
-        # ******** END OF CHANGE 3 ********
+        processed_rows_old = _generate_upsse_rows(old_price_rows, bkhd_ws, static_data, selected_chxd, is_new_price_period=False)
         
-        combined_rows = processed_rows_old + processed_rows_new
+        combined_rows = processed_rows_new + processed_rows_old
+        # ******** END OF CHANGE ********
+        
         if not combined_rows:
             raise ValueError("Không có dữ liệu hợp lệ để xử lý trong file tải lên.")
 
+        # --- Create final Excel file ---
         output_wb = Workbook()
         output_ws = output_wb.active
         headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
@@ -244,10 +248,7 @@ def process_file_with_price_periods(uploaded_file_content, static_data, selected
         raise e
 
 # --- Các hàm phụ ---
-# ******** START OF CHANGE 4 ********
-# Add the new parameter to the function definition
 def add_summary_row(data_product, bkhd_source_ws, product_name, details, is_new_price_period=False):
-# ******** END OF CHANGE 4 ********
     headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
     new_row = [''] * len(headers)
     new_row[0] = details['g5_val']
@@ -258,22 +259,17 @@ def add_summary_row(data_product, bkhd_source_ws, product_name, details, is_new_
     value_C = clean_string(new_row[2])
     value_E = clean_string(new_row[4])
     
-    # ******** START OF CHANGE 5 ********
-    # Use different suffix maps based on the price period
     if is_new_price_period:
-        # Suffixes for the new price period (5, 6, 7, 8)
         suffix_d_map = {
             "Xăng E5 RON 92-II": "5", "Xăng RON 95-III": "6",
             "Dầu DO 0,05S-II": "7", "Dầu DO 0,001S-V": "8"
         }
     else:
-        # Original suffixes for the old price period (1, 2, 3, 4)
         suffix_d_map = {
             "Xăng E5 RON 92-II": "1", "Xăng RON 95-III": "2",
             "Dầu DO 0,05S-II": "3", "Dầu DO 0,001S-V": "4"
         }
     suffix_d = suffix_d_map.get(product_name, "")
-    # ******** END OF CHANGE 5 ********
 
     date_part = ""
     if value_C and len(value_C) >= 10:
