@@ -64,7 +64,46 @@ def get_static_data_from_excel(file_path):
         print(f"Error reading static data: {e}")
         return None
 
-# --- Hàm xử lý logic lõi (được tái sử dụng) ---
+# --- ***** START OF CHANGE: NEW HELPER FUNCTION ***** ---
+def _create_excel_buffer(processed_rows):
+    """
+    Tạo một file Excel trong bộ nhớ từ dữ liệu đã xử lý.
+    """
+    if not processed_rows:
+        return None
+
+    output_wb = Workbook()
+    output_ws = output_wb.active
+    headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
+    
+    for _ in range(4): output_ws.append([''] * len(headers))
+    output_ws.append(headers)
+    for r_data in processed_rows: output_ws.append(r_data)
+
+    date_style = NamedStyle(name="date_style", number_format='DD/MM/YYYY')
+    for row_index in range(6, output_ws.max_row + 1):
+        cell = output_ws[f'C{row_index}']
+        if isinstance(cell.value, str) and '-' in cell.value:
+            try:
+                date_obj = datetime.strptime(cell.value, '%Y-%m-%d')
+                cell.value = date_obj 
+                cell.style = date_style 
+            except (ValueError, TypeError): pass
+        elif isinstance(cell.value, datetime):
+            cell.style = date_style
+
+    output_ws.column_dimensions['B'].width = 35
+    output_ws.column_dimensions['C'].width = 12
+    output_ws.column_dimensions['D'].width = 12
+    
+    output_buffer = io.BytesIO()
+    output_wb.save(output_buffer)
+    output_buffer.seek(0)
+    
+    return output_buffer
+# --- ***** END OF CHANGE ***** ---
+
+
 def _generate_upsse_rows(source_data_rows, full_bkhd_ws, static_data, selected_chxd, is_new_price_period=False):
     chxd_details = static_data["chxd_detail_map"].get(selected_chxd)
     if not chxd_details:
@@ -143,7 +182,6 @@ def _generate_upsse_rows(source_data_rows, full_bkhd_ws, static_data, selected_c
     final_rows.extend(all_tmt_rows)
     return final_rows
 
-# --- Hàm điều phối chính ---
 def process_file_with_price_periods(uploaded_file_content, static_data, selected_chxd, price_periods, new_price_invoice_number):
     try:
         bkhd_wb = load_workbook(io.BytesIO(uploaded_file_content), data_only=True)
@@ -174,15 +212,10 @@ def process_file_with_price_periods(uploaded_file_content, static_data, selected
         new_price_rows = []
         
         if price_periods == '1':
-            # Nếu chỉ có 1 giai đoạn giá, tất cả các dòng đều thuộc giai đoạn "giá cũ" (mặc định)
             old_price_rows = all_source_rows
         else:
-            # ******** START OF CHANGE ********
-            # Logic mới để tách giai đoạn giá
             split_index = -1
-            invoice_col_idx = 2  # Cột C là cột "Số" hóa đơn
-
-            # Tìm vị trí (index) của dòng chứa hóa đơn giá mới
+            invoice_col_idx = 2
             for i, row in enumerate(all_source_rows):
                 if len(row) > invoice_col_idx and row[invoice_col_idx] is not None:
                     current_invoice = clean_string(str(row[invoice_col_idx]))
@@ -191,63 +224,38 @@ def process_file_with_price_periods(uploaded_file_content, static_data, selected
                         break
             
             if split_index == -1:
-                # Nếu không tìm thấy số hóa đơn, báo lỗi
                 raise ValueError(f"Không tìm thấy số hóa đơn '{new_price_invoice_number}' để chia giai đoạn giá.")
 
-            # Tách danh sách dựa trên vị trí đã tìm thấy
-            # Giá mới: từ đầu danh sách đến hết dòng chứa số hóa đơn
             new_price_rows = all_source_rows[:split_index + 1]
-            # Giá cũ: từ ngay sau dòng chứa số hóa đơn đến cuối danh sách
             old_price_rows = all_source_rows[split_index + 1:]
-            # ******** END OF CHANGE ********
 
-        # ******** START OF CHANGE ********
-        # Đảo ngược thứ tự xử lý và gộp để giữ đúng thứ tự file gốc (mới trên, cũ dưới)
-        processed_rows_new = _generate_upsse_rows(new_price_rows, bkhd_ws, static_data, selected_chxd, is_new_price_period=True)
-        processed_rows_old = _generate_upsse_rows(old_price_rows, bkhd_ws, static_data, selected_chxd, is_new_price_period=False)
-        
-        combined_rows = processed_rows_new + processed_rows_old
-        # ******** END OF CHANGE ********
-        
-        if not combined_rows:
-            raise ValueError("Không có dữ liệu hợp lệ để xử lý trong file tải lên.")
-
-        # --- Create final Excel file ---
-        output_wb = Workbook()
-        output_ws = output_wb.active
-        headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
-        
-        for _ in range(4): output_ws.append([''] * len(headers))
-        output_ws.append(headers)
-        for r_data in combined_rows: output_ws.append(r_data)
-
-        date_style = NamedStyle(name="date_style", number_format='DD/MM/YYYY')
-        for row_index in range(6, output_ws.max_row + 1):
-            cell = output_ws[f'C{row_index}']
-            if isinstance(cell.value, str) and '-' in cell.value:
-                try:
-                    date_obj = datetime.strptime(cell.value, '%Y-%m-%d')
-                    cell.value = date_obj 
-                    cell.style = date_style 
-                except (ValueError, TypeError): pass
-            elif isinstance(cell.value, datetime):
-                cell.style = date_style
-
-        output_ws.column_dimensions['B'].width = 35
-        output_ws.column_dimensions['C'].width = 12
-        output_ws.column_dimensions['D'].width = 12
-        
-        output_buffer = io.BytesIO()
-        output_wb.save(output_buffer)
-        output_buffer.seek(0)
-        
-        return output_buffer
+        # --- ***** START OF CHANGE: RETURN LOGIC ***** ---
+        if price_periods == '1':
+            # Trường hợp 1 giai đoạn giá, xử lý và trả về 1 file như cũ
+            processed_rows = _generate_upsse_rows(old_price_rows, bkhd_ws, static_data, selected_chxd, is_new_price_period=False)
+            if not processed_rows:
+                raise ValueError("Không có dữ liệu hợp lệ để xử lý trong file tải lên.")
+            return _create_excel_buffer(processed_rows)
+        else:
+            # Trường hợp 2 giai đoạn giá, xử lý và trả về 2 file buffers
+            processed_rows_new = _generate_upsse_rows(new_price_rows, bkhd_ws, static_data, selected_chxd, is_new_price_period=True)
+            processed_rows_old = _generate_upsse_rows(old_price_rows, bkhd_ws, static_data, selected_chxd, is_new_price_period=False)
+            
+            buffer_new = _create_excel_buffer(processed_rows_new)
+            buffer_old = _create_excel_buffer(processed_rows_old)
+            
+            if not buffer_new and not buffer_old:
+                 raise ValueError("Không có dữ liệu hợp lệ để xử lý trong file tải lên.")
+            
+            # Trả về một dictionary chứa cả hai buffers
+            return {'new': buffer_new, 'old': buffer_old}
+        # --- ***** END OF CHANGE ***** ---
 
     except Exception as e:
         print(f"Error during processing: {e}")
         raise e
 
-# --- Các hàm phụ ---
+# --- Các hàm phụ (Không thay đổi) ---
 def add_summary_row(data_product, bkhd_source_ws, product_name, details, is_new_price_period=False):
     headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
     new_row = [''] * len(headers)
