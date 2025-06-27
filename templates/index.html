@@ -4,10 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Công cụ đồng bộ SSE</title>
-    <!-- Include Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-1ZG44VNZQ9"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
@@ -17,7 +15,6 @@
       gtag('config', 'G-1ZG44VNZQ9');
     </script>
 
-    <!-- Custom CSS for blinking warning -->
     <style>
         @keyframes blinker { 
             50% { opacity: 0.7; } 
@@ -30,9 +27,7 @@
 <body class="bg-gray-100 flex items-center justify-center min-h-screen py-8">
 
     <div class="w-full max-w-2xl bg-white rounded-lg shadow-xl p-8">
-        <!-- Header -->
         <div class="flex items-center justify-center space-x-4 mb-6">
-            <!-- Giả sử bạn có file Logo.png trong thư mục static -->
             <img src="{{ url_for('static', filename='Logo.png') }}" alt="Logo Công Ty" class="h-20"> 
             <div class="text-center">
                 <h2 class="text-xl font-bold text-red-600 leading-tight">CÔNG TY CỔ PHẦN XĂNG DẦU</h2>
@@ -42,12 +37,10 @@
         
         <h1 class="text-base font-bold text-center text-blue-400 mb-6">Công cụ đồng bộ dữ liệu lên phần mềm kế toán SSE</h1>
 
-        <!-- Blinking Warning Box -->
         <div class="blinking-warning p-3 mb-6 bg-yellow-100 border border-yellow-400 rounded-md text-center">
             <p class="text-red-400 font-bold">Lưu ý quan trọng: Để tránh lỗi, sau khi tải file bảng kê từ POS về, bạn hãy mở lên và lưu lại (ấn Ctrl+S hoặc chọn File/Save) trước khi đưa vào ứng dụng để xử lý.</p>
         </div>
 
-        <!-- Flash Messages for Errors -->
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
@@ -62,9 +55,8 @@
             {% endif %}
         {% endwith %}
 
-        <!-- Upload Form -->
         <form action="{{ url_for('process') }}" method="post" enctype="multipart/form-data" class="space-y-6">
-            <!-- 1. Dropdown for CHXD -->
+            
             <div>
                 <label for="chxd" class="block text-lg font-medium text-gray-700 mb-2">1. Chọn Cửa Hàng Xăng Dầu (CHXD):</label>
                 <select id="chxd" name="chxd" required class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
@@ -73,13 +65,8 @@
                         <option value="{{ item }}">{{ item }}</option>
                     {% endfor %}
                 </select>
-            </div>
 
-            <!-- BẮT ĐẦU PHẦN CHỈNH SỬA -->
-            <!-- 2. Price Period Selection -->
-            <div>
-                <label class="block text-lg font-medium text-gray-700 mb-2">2. Chọn số giai đoạn giá:</label>
-                <div class="mt-2 flex items-center space-x-6">
+                <div class="mt-4 flex items-center space-x-6">
                     <label class="flex items-center">
                         <input type="radio" name="price_periods" value="1" class="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500" checked onchange="toggleInvoiceInput()">
                         <span class="ml-2 text-gray-700">1 Giai đoạn giá</span>
@@ -91,15 +78,13 @@
                 </div>
             </div>
 
-            <!-- New Price Invoice Number Input (hidden by default) -->
             <div id="invoice-input-container" class="hidden">
                 <label for="invoice_number" class="block text-lg font-medium text-gray-700 mb-2">Nhập số hóa đơn đầu tiên của giá mới:</label>
                 <input type="text" name="invoice_number" id="invoice_number" placeholder="Nhập chính xác số hóa đơn từ file bảng kê" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
             </div>
 
-            <!-- 3. File Uploader -->
             <div>
-                <label for="file" class="block text-lg font-medium text-gray-700 mb-2">3. Tải lên file bảng kê hóa đơn:</label>
+                <label for="file" class="block text-lg font-medium text-gray-700 mb-2">2. Tải lên file bảng kê hóa đơn:</label>
                 <input type="file" name="file" id="file" required class="block w-full text-sm text-gray-500
                     file:mr-4 file:py-2 file:px-4
                     file:rounded-md file:border-0
@@ -108,10 +93,6 @@
                     hover:file:bg-indigo-100
                 ">
             </div>
-            <!-- KẾT THÚC PHẦN CHỈNH SỬA -->
-
-
-            <!-- Submit Button -->
             <div>
                 <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-lg font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
                     Xử lý và Tải xuống
@@ -122,14 +103,12 @@
             </div>
         </form>
 
-        <!-- Footer -->
         <div class="mt-8 border-t pt-4 text-center">
             <p class="text-sm text-gray-600">Nếu gặp khó khăn, vui lòng liên hệ tác giả để được hỗ trợ.</p>
             <p class="text-sm text-gray-600">Bản quyền thuộc về Nguyễn Trọng Hoàn - 0902069469</p>
         </div>
     </div>
 
-    <!-- JavaScript to toggle visibility -->
     <script>
         function toggleInvoiceInput() {
             const pricePeriods = document.querySelector('input[name="price_periods"]:checked').value;
