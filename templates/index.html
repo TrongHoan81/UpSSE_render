@@ -27,14 +27,14 @@
         }
     </style>
 </head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+<body class="bg-gray-100 flex items-center justify-center min-h-screen py-8">
 
     <div class="w-full max-w-2xl bg-white rounded-lg shadow-xl p-8">
         <!-- Header -->
         <div class="flex items-center justify-center space-x-4 mb-6">
-            <img src="{{ url_for('static', filename='Logo.png') }}" alt="Logo Công Ty" class="h-20"> <!-- Đã giảm kích thước logo -->
+            <!-- Giả sử bạn có file Logo.png trong thư mục static -->
+            <img src="{{ url_for('static', filename='Logo.png') }}" alt="Logo Công Ty" class="h-20"> 
             <div class="text-center">
-                <!-- Đã giảm cỡ chữ và khoảng cách dòng -->
                 <h2 class="text-xl font-bold text-red-600 leading-tight">CÔNG TY CỔ PHẦN XĂNG DẦU</h2>
                 <h2 class="text-xl font-bold text-red-600 leading-tight">DẦU KHÍ NAM ĐỊNH</h2>
             </div>
@@ -64,7 +64,7 @@
 
         <!-- Upload Form -->
         <form action="{{ url_for('process') }}" method="post" enctype="multipart/form-data" class="space-y-6">
-            <!-- Dropdown for CHXD -->
+            <!-- 1. Dropdown for CHXD -->
             <div>
                 <label for="chxd" class="block text-lg font-medium text-gray-700 mb-2">1. Chọn Cửa Hàng Xăng Dầu (CHXD):</label>
                 <select id="chxd" name="chxd" required class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
@@ -75,9 +75,31 @@
                 </select>
             </div>
 
-            <!-- File Uploader -->
+            <!-- BẮT ĐẦU PHẦN CHỈNH SỬA -->
+            <!-- 2. Price Period Selection -->
             <div>
-                <label for="file" class="block text-lg font-medium text-gray-700 mb-2">2. Tải lên file bảng kê hóa đơn:</label>
+                <label class="block text-lg font-medium text-gray-700 mb-2">2. Chọn số giai đoạn giá:</label>
+                <div class="mt-2 flex items-center space-x-6">
+                    <label class="flex items-center">
+                        <input type="radio" name="price_periods" value="1" class="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500" checked onchange="toggleInvoiceInput()">
+                        <span class="ml-2 text-gray-700">1 Giai đoạn giá</span>
+                    </label>
+                    <label class="flex items-center">
+                        <input type="radio" name="price_periods" value="2" class="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500" onchange="toggleInvoiceInput()">
+                        <span class="ml-2 text-gray-700">2 Giai đoạn giá</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- New Price Invoice Number Input (hidden by default) -->
+            <div id="invoice-input-container" class="hidden">
+                <label for="invoice_number" class="block text-lg font-medium text-gray-700 mb-2">Nhập số hóa đơn đầu tiên của giá mới:</label>
+                <input type="text" name="invoice_number" id="invoice_number" placeholder="Nhập chính xác số hóa đơn từ file bảng kê" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+            </div>
+
+            <!-- 3. File Uploader -->
+            <div>
+                <label for="file" class="block text-lg font-medium text-gray-700 mb-2">3. Tải lên file bảng kê hóa đơn:</label>
                 <input type="file" name="file" id="file" required class="block w-full text-sm text-gray-500
                     file:mr-4 file:py-2 file:px-4
                     file:rounded-md file:border-0
@@ -86,17 +108,17 @@
                     hover:file:bg-indigo-100
                 ">
             </div>
+            <!-- KẾT THÚC PHẦN CHỈNH SỬA -->
+
 
             <!-- Submit Button -->
             <div>
                 <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-lg font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
                     Xử lý và Tải xuống
                 </button>
-                <!-- NEW BLINKING WARNING - BẮT ĐẦU THAY ĐỔI -->
                 <div class="mt-3 text-center blinking-warning bg-yellow-200 rounded-md p-2">
                     <p class="text-sm text-red-700 font-medium">Sau khi tải về, bạn hãy mở file lên, sau đó ấn lưu (Ctrl+S) trước khi đồng bộ lên SSE</p>
                 </div>
-                <!-- KẾT THÚC THAY ĐỔI -->
             </div>
         </form>
 
@@ -107,5 +129,21 @@
         </div>
     </div>
 
+    <!-- JavaScript to toggle visibility -->
+    <script>
+        function toggleInvoiceInput() {
+            const pricePeriods = document.querySelector('input[name="price_periods"]:checked').value;
+            const invoiceInputContainer = document.getElementById('invoice-input-container');
+            const invoiceInput = document.getElementById('invoice_number');
+            if (pricePeriods === '2') {
+                invoiceInputContainer.classList.remove('hidden');
+                invoiceInput.required = true;
+            } else {
+                invoiceInputContainer.classList.add('hidden');
+                invoiceInput.required = false;
+                invoiceInput.value = ''; // Clear the input when hidden
+            }
+        }
+    </script>
 </body>
 </html>
