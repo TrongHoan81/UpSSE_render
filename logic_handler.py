@@ -161,7 +161,7 @@ def _generate_upsse_rows(source_data_rows, static_data, selected_chxd):
     final_rows.extend(all_tmt_rows)
     return final_rows
 
-# --- ***** START OF CHANGE: CORRECTED COLUMN INDEX FOR TAX CALCULATION ***** ---
+# --- ***** START OF CHANGE: CORRECTED ADDRESS/TAX ID ASSIGNMENT ***** ---
 def _process_single_row(row, details, selected_chxd):
     """Hàm phụ để xử lý một dòng hóa đơn đơn lẻ."""
     headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
@@ -173,18 +173,16 @@ def _process_single_row(row, details, selected_chxd):
         ngay_hd_raw = row[3]
         so_ct = clean_string(str(row[1]))
         so_hd = clean_string(str(row[2]))
-        dia_chi = clean_string(str(row[6]))
-        mst = clean_string(str(row[7]))
+        dia_chi = clean_string(str(row[6])) # Dữ liệu từ cột G
+        mst = clean_string(str(row[7]))     # Dữ liệu từ cột H
         product_name = clean_string(str(row[8]))
         so_luong = to_float(row[10])
         don_gia_vat = to_float(row[11])
-        tien_hang_source = to_float(row[13]) # Cột N
-        # **SỬA LỖI**: Lấy dữ liệu từ cột O (chỉ số 14) thay vì cột M (chỉ số 12)
-        tien_thue_source = to_float(row[14]) # Cột O
-        ma_thue_percent = to_float(row[15]) if row[15] is not None else 8.0 # Cột P
+        tien_hang_source = to_float(row[13])
+        tien_thue_source = to_float(row[14])
+        ma_thue_percent = to_float(row[15]) if row[15] is not None else 8.0
     except IndexError:
         raise ValueError("Lỗi đọc cột từ file bảng kê. Vui lòng đảm bảo file có đủ các cột từ A đến P.")
-
 
     upsse_row[0] = ma_kh if ma_kh and len(ma_kh) <= 9 else details['g5_val']
     upsse_row[1] = ten_kh
@@ -219,7 +217,13 @@ def _process_single_row(row, details, selected_chxd):
     upsse_row[21] = details['v_lookup_table'].get(details['h5_val'], '')
     upsse_row[23] = details['store_specific_x_lookup'].get(selected_chxd, {}).get(product_name.lower(), '')
     upsse_row[31] = upsse_row[1]
-    upsse_row[32], upsse_row[33] = dia_chi, mst
+    
+    # **SỬA LỖI**: Tráo đổi lại giá trị cho đúng với logic gốc
+    # Cột "Địa chỉ (thuế)" (AG) lấy giá trị Mã số thuế (cột H)
+    # Cột "Mã số thuế" (AH) lấy giá trị Địa chỉ (cột G)
+    upsse_row[32] = mst
+    upsse_row[33] = dia_chi
+    
     upsse_row[36] = tien_thue_source - round(so_luong * tmt_value * tax_rate_decimal, 0)
     
     return upsse_row
@@ -264,7 +268,7 @@ def process_file_with_price_periods(uploaded_file_content, static_data, selected
         print(f"Error during processing: {e}")
         raise e
 
-# --- ***** START OF CHANGE: CORRECTED COLUMN INDEX FOR TAX CALCULATION IN SUMMARY ***** ---
+# --- Hàm add_summary_row (Không thay đổi) ---
 def add_summary_row(original_source_rows, product_name, details, product_tax, selected_chxd):
     """
     Tạo dòng tổng hợp bằng cách tính toán trên tổng dữ liệu gốc để tránh sai số làm tròn.
@@ -272,14 +276,11 @@ def add_summary_row(original_source_rows, product_name, details, product_tax, se
     headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
     new_row = [''] * len(headers)
 
-    # --- Tính tổng các giá trị GỐC trước ---
     total_qty = sum(to_float(r[10]) for r in original_source_rows)
     total_don_gia_vat_x_qty = sum(to_float(r[11]) * to_float(r[10]) for r in original_source_rows)
     total_thanh_tien_source = sum(to_float(r[13]) for r in original_source_rows)
-    # **SỬA LỖI**: Lấy dữ liệu từ cột O (chỉ số 14) thay vì cột M (chỉ số 12)
     total_tien_thue_source = sum(to_float(r[14]) for r in original_source_rows)
 
-    # --- Điền thông tin tĩnh từ dòng mẫu đầu tiên ---
     sample_row = original_source_rows[0]
     ngay_hd_raw = sample_row[3]
     so_ct = clean_string(str(sample_row[1]))
@@ -316,7 +317,6 @@ def add_summary_row(original_source_rows, product_name, details, product_tax, se
     tmt_value = details['tmt_lookup_table'].get(product_name.lower(), 0.0)
     tax_rate_decimal = product_tax / 100.0
 
-    # --- Áp dụng công thức tính toán trên TỔNG SỐ ---
     avg_don_gia_vat = total_don_gia_vat_x_qty / total_qty if total_qty > 0 else 0
     new_row[13] = round(avg_don_gia_vat / (1 + tax_rate_decimal) - tmt_value, 2)
     new_row[14] = total_thanh_tien_source - round(tmt_value * total_qty)
@@ -331,8 +331,6 @@ def add_summary_row(original_source_rows, product_name, details, product_tax, se
     new_row[31] = f"Khách mua {product_name} không lấy hóa đơn"
     
     return new_row
-# --- ***** END OF CHANGE ***** ---
-
 
 # --- Hàm create_tmt_row (Không thay đổi) ---
 def create_tmt_row(original_row, tmt_value, details):
