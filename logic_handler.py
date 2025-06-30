@@ -7,6 +7,7 @@ import io
 
 # --- Các hàm trợ giúp (Không thay đổi) ---
 def to_float(value):
+    """Chuyển đổi giá trị sang kiểu float một cách an toàn."""
     try:
         if isinstance(value, str):
             value = value.replace(",", "").strip()
@@ -15,12 +16,14 @@ def to_float(value):
         return 0.0
 
 def clean_string(s):
+    """Làm sạch chuỗi, loại bỏ khoảng trắng thừa."""
     if s is None:
         return ""
     return re.sub(r'\s+', ' ', str(s)).strip()
 
 # --- Hàm đọc dữ liệu tĩnh (Không thay đổi) ---
 def get_static_data_from_excel(file_path):
+    """Đọc dữ liệu cấu hình tĩnh từ file Data.xlsx."""
     try:
         wb = load_workbook(file_path, data_only=True)
         ws = wb.active
@@ -64,7 +67,7 @@ def get_static_data_from_excel(file_path):
         print(f"Error reading static data: {e}")
         return None
 
-# --- ***** START OF CHANGE: NEW HELPER FUNCTION ***** ---
+# --- Hàm tạo buffer Excel (Không thay đổi) ---
 def _create_excel_buffer(processed_rows):
     """
     Tạo một file Excel trong bộ nhớ từ dữ liệu đã xử lý.
@@ -101,88 +104,132 @@ def _create_excel_buffer(processed_rows):
     output_buffer.seek(0)
     
     return output_buffer
-# --- ***** END OF CHANGE ***** ---
 
 
+# --- ***** START OF CHANGE: MAJOR REFACTOR OF THIS FUNCTION ***** ---
 def _generate_upsse_rows(source_data_rows, full_bkhd_ws, static_data, selected_chxd, is_new_price_period=False):
+    """
+    Hàm chính để xử lý các dòng từ file bảng kê và tạo ra các dòng cho file UpSSE.
+    Đã được cấu trúc lại để đọc đúng cột và xử lý mã thuế động.
+    """
     chxd_details = static_data["chxd_detail_map"].get(selected_chxd)
     if not chxd_details:
         raise ValueError(f"Không tìm thấy thông tin chi tiết cho CHXD: '{selected_chxd}'")
     
     details = {**static_data, **chxd_details}
 
-    vi_tri_cu_idx = [0, 1, 2, 3, 4, 5, 7, 6, 8, 10, 11, 13, 14, 16]
-    intermediate_data = []
-    for row in source_data_rows:
-        if len(row) <= max(vi_tri_cu_idx): continue
-        new_row = [row[i] for i in vi_tri_cu_idx]
-        if new_row[3] and not isinstance(new_row[3], datetime):
-            try:
-                new_row[3] = datetime.strptime(str(new_row[3]).split(' ')[0], '%d-%m-%Y')
-            except (ValueError, TypeError): pass
-        if isinstance(new_row[3], datetime):
-             new_row[3] = new_row[3].strftime('%Y-%m-%d')
-        ma_kh = clean_string(str(new_row[4]))
-        new_row.append("No" if not ma_kh or len(ma_kh) > 9 else "Yes")
-        intermediate_data.append(new_row)
-
-    if not intermediate_data:
-        return []
-
     final_rows, all_tmt_rows = [], []
     no_invoice_rows = {p: [] for p in ["Xăng E5 RON 92-II", "Xăng RON 95-III", "Dầu DO 0,05S-II", "Dầu DO 0,001S-V"]}
+    product_tax_map = {}  # Dùng để lưu mã thuế cho từng mặt hàng, phục vụ dòng tổng
+
     headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
     
-    for row in intermediate_data:
-        upsse_row = [''] * len(headers)
-        upsse_row[0] = clean_string(str(row[4])) if row[-1] == 'Yes' and pd.notna(row[4]) else details['g5_val']
-        upsse_row[1], upsse_row[2] = clean_string(str(row[5])), row[3]
-        b_orig, c_orig = clean_string(str(row[1])), clean_string(str(row[2]))
+    for row_idx, row in enumerate(source_data_rows):
+        # Bỏ qua các dòng trống
+        if not row or row[0] is None:
+            continue
         
-        if details['b5_val'] == "Nguyễn Huệ": upsse_row[3] = f"HN{c_orig[-6:]}"
-        elif details['b5_val'] == "Mai Linh": upsse_row[3] = f"MM{c_orig[-6:]}"
-        else: upsse_row[3] = f"{b_orig[-2:]}{c_orig[-6:]}"
+        # --- Đọc dữ liệu từ dòng của file bảng kê ---
+        try:
+            ma_kh = clean_string(str(row[4]))
+            ten_kh = clean_string(str(row[5]))
+            ngay_hd_raw = row[3]
+            so_ct = clean_string(str(row[1]))
+            so_hd = clean_string(str(row[2]))
+            dia_chi = clean_string(str(row[6]))
+            mst = clean_string(str(row[7]))
+            product_name = clean_string(str(row[8]))
+            so_luong = to_float(row[9])
+            don_gia_vat = to_float(row[10])  # Đơn giá đã bao gồm VAT
+            tien_hang_source = to_float(row[11]) # Tiền hàng đã bao gồm VAT
+            tien_thue_source = to_float(row[12])
+            # Lấy mã thuế từ cột P (index 15), nếu trống thì mặc định là 8
+            ma_thue_percent = to_float(row[15]) if row[15] is not None else 8.0
+        except IndexError:
+            raise ValueError(f"Dòng {row_idx + 5} trong file bảng kê không đủ cột. Cần ít nhất 16 cột (từ A đến P).")
 
-        upsse_row[4] = f"1{b_orig}" if b_orig else ''
+        # Lưu lại mã thuế cho mặt hàng để dùng cho dòng tổng
+        if product_name and product_name not in product_tax_map:
+            product_tax_map[product_name] = ma_thue_percent
+        
+        # --- Bắt đầu tạo dòng dữ liệu cho file UpSSE ---
+        upsse_row = [''] * len(headers)
+
+        upsse_row[0] = ma_kh if ma_kh and len(ma_kh) <= 9 else details['g5_val']
+        upsse_row[1] = ten_kh
+        
+        if isinstance(ngay_hd_raw, datetime):
+            upsse_row[2] = ngay_hd_raw.strftime('%Y-%m-%d')
+        elif isinstance(ngay_hd_raw, str):
+            try:
+                upsse_row[2] = datetime.strptime(ngay_hd_raw.split(' ')[0], '%d-%m-%Y').strftime('%Y-%m-%d')
+            except (ValueError, TypeError):
+                 upsse_row[2] = ngay_hd_raw
+        else:
+            upsse_row[2] = ngay_hd_raw
+
+        if details['b5_val'] == "Nguyễn Huệ": upsse_row[3] = f"HN{so_hd[-6:]}"
+        elif details['b5_val'] == "Mai Linh": upsse_row[3] = f"MM{so_hd[-6:]}"
+        else: upsse_row[3] = f"{so_ct[-2:]}{so_hd[-6:]}"
+
+        upsse_row[4] = f"1{so_ct}" if so_ct else ''
         upsse_row[5] = f"Xuất bán lẻ theo hóa đơn số {upsse_row[3]}"
-        product_name = clean_string(str(row[8]))
         upsse_row[6] = details['lookup_table'].get(product_name.lower(), '')
         upsse_row[7], upsse_row[8] = product_name, "Lít"
         upsse_row[9] = details['g5_val']
-        upsse_row[12] = to_float(row[9])
+        upsse_row[12] = so_luong
+        
         tmt_value = details['tmt_lookup_table'].get(product_name.lower(), 0.0)
-        upsse_row[13] = round(to_float(row[10]) / 1.1 - tmt_value, 2)
-        upsse_row[14] = to_float(row[11]) - round(tmt_value * upsse_row[12])
-        upsse_row[17] = 10
+        tax_rate_decimal = ma_thue_percent / 100.0
+
+        # Giá bán (chưa VAT, chưa TMT)
+        upsse_row[13] = round(don_gia_vat / (1 + tax_rate_decimal) - tmt_value, 2)
+        # Tiền hàng (chưa VAT, chưa TMT)
+        upsse_row[14] = round(upsse_row[13] * upsse_row[12], 0)
+        
+        # --- Yêu cầu 1: Gán "Mã thuế" động ---
+        upsse_row[17] = ma_thue_percent
+        
         upsse_row[18] = details['s_lookup_table'].get(details['h5_val'], '')
         upsse_row[19] = details['t_lookup_regular'].get(details['h5_val'], '')
         upsse_row[20] = details['u_value']
         upsse_row[21] = details['v_lookup_table'].get(details['h5_val'], '')
         upsse_row[23] = details['store_specific_x_lookup'].get(selected_chxd, {}).get(product_name.lower(), '')
         upsse_row[31] = upsse_row[1]
-        upsse_row[32], upsse_row[33] = row[6], row[7]
-        upsse_row[36] = to_float(row[12]) - round(upsse_row[12] * tmt_value * 0.1)
+        upsse_row[32], upsse_row[33] = dia_chi, mst
+        
+        # Tiền thuế (VAT) - đã được điều chỉnh lại công thức
+        upsse_row[36] = tien_thue_source - round(so_luong * tmt_value * tax_rate_decimal, 0)
 
-        if upsse_row[1] == "Người mua không lấy hóa đơn" and product_name in no_invoice_rows:
+        # Gom các dòng "không lấy hóa đơn" lại để xử lý sau
+        if ten_kh == "Người mua không lấy hóa đơn" and product_name in no_invoice_rows:
             no_invoice_rows[product_name].append(upsse_row)
         else:
             final_rows.append(upsse_row)
-            if tmt_value > 0 and upsse_row[12] > 0:
+            if tmt_value > 0 and so_luong > 0:
                 all_tmt_rows.append(create_tmt_row(upsse_row, tmt_value, details))
 
+    # Xử lý các dòng tổng hợp cho khách không lấy hóa đơn
     for product, rows in no_invoice_rows.items():
         if rows:
-            summary_row = add_summary_row(rows, full_bkhd_ws, product, details, is_new_price_period=is_new_price_period)
+            # --- Yêu cầu 2: Lấy mã thuế đã lưu cho dòng tổng ---
+            product_tax = product_tax_map.get(product, 8.0)  # Mặc định là 8% nếu không tìm thấy
+            summary_row = add_summary_row(rows, full_bkhd_ws, product, details, is_new_price_period, product_tax)
             final_rows.append(summary_row)
+            
             tmt_unit = details['tmt_lookup_table'].get(product.lower(), 0)
-            tmt_summary = create_tmt_row(summary_row, tmt_unit, details)
-            tmt_summary[1] = summary_row[1]
-            all_tmt_rows.append(tmt_summary)
+            if tmt_unit > 0:
+                tmt_summary = create_tmt_row(summary_row, tmt_unit, details)
+                tmt_summary[1] = summary_row[1]
+                all_tmt_rows.append(tmt_summary)
 
     final_rows.extend(all_tmt_rows)
     return final_rows
+# --- ***** END OF CHANGE ***** ---
+
 
 def process_file_with_price_periods(uploaded_file_content, static_data, selected_chxd, price_periods, new_price_invoice_number):
+    """Hàm điều phối chính, chia dữ liệu theo giai đoạn giá nếu cần."""
     try:
         bkhd_wb = load_workbook(io.BytesIO(uploaded_file_content), data_only=True)
         bkhd_ws = bkhd_wb.active
@@ -226,18 +273,17 @@ def process_file_with_price_periods(uploaded_file_content, static_data, selected
             if split_index == -1:
                 raise ValueError(f"Không tìm thấy số hóa đơn '{new_price_invoice_number}' để chia giai đoạn giá.")
 
-            new_price_rows = all_source_rows[:split_index + 1]
-            old_price_rows = all_source_rows[split_index + 1:]
+            # Theo logic mới, hóa đơn giá mới nằm ở trên cùng
+            new_price_rows = all_source_rows[:split_index]
+            old_price_rows = all_source_rows[split_index:]
 
-        # --- ***** START OF CHANGE: RETURN LOGIC ***** ---
+
         if price_periods == '1':
-            # Trường hợp 1 giai đoạn giá, xử lý và trả về 1 file như cũ
             processed_rows = _generate_upsse_rows(old_price_rows, bkhd_ws, static_data, selected_chxd, is_new_price_period=False)
             if not processed_rows:
                 raise ValueError("Không có dữ liệu hợp lệ để xử lý trong file tải lên.")
             return _create_excel_buffer(processed_rows)
         else:
-            # Trường hợp 2 giai đoạn giá, xử lý và trả về 2 file buffers
             processed_rows_new = _generate_upsse_rows(new_price_rows, bkhd_ws, static_data, selected_chxd, is_new_price_period=True)
             processed_rows_old = _generate_upsse_rows(old_price_rows, bkhd_ws, static_data, selected_chxd, is_new_price_period=False)
             
@@ -247,16 +293,15 @@ def process_file_with_price_periods(uploaded_file_content, static_data, selected
             if not buffer_new and not buffer_old:
                  raise ValueError("Không có dữ liệu hợp lệ để xử lý trong file tải lên.")
             
-            # Trả về một dictionary chứa cả hai buffers
             return {'new': buffer_new, 'old': buffer_old}
-        # --- ***** END OF CHANGE ***** ---
 
     except Exception as e:
         print(f"Error during processing: {e}")
         raise e
 
-# --- Các hàm phụ (Không thay đổi) ---
-def add_summary_row(data_product, bkhd_source_ws, product_name, details, is_new_price_period=False):
+# --- ***** START OF CHANGE: ADD product_tax PARAMETER ***** ---
+def add_summary_row(data_product, bkhd_source_ws, product_name, details, is_new_price_period, product_tax):
+    """Tạo dòng tổng hợp cho khách không lấy hóa đơn, sử dụng mã thuế được truyền vào."""
     headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
     new_row = [''] * len(headers)
     new_row[0] = details['g5_val']
@@ -268,15 +313,9 @@ def add_summary_row(data_product, bkhd_source_ws, product_name, details, is_new_
     value_E = clean_string(new_row[4])
     
     if is_new_price_period:
-        suffix_d_map = {
-            "Xăng E5 RON 92-II": "5", "Xăng RON 95-III": "6",
-            "Dầu DO 0,05S-II": "7", "Dầu DO 0,001S-V": "8"
-        }
+        suffix_d_map = {"Xăng E5 RON 92-II": "5", "Xăng RON 95-III": "6", "Dầu DO 0,05S-II": "7", "Dầu DO 0,001S-V": "8"}
     else:
-        suffix_d_map = {
-            "Xăng E5 RON 92-II": "1", "Xăng RON 95-III": "2",
-            "Dầu DO 0,05S-II": "3", "Dầu DO 0,001S-V": "4"
-        }
+        suffix_d_map = {"Xăng E5 RON 92-II": "1", "Xăng RON 95-III": "2", "Dầu DO 0,05S-II": "3", "Dầu DO 0,001S-V": "4"}
     suffix_d = suffix_d_map.get(product_name, "")
 
     date_part = ""
@@ -284,8 +323,7 @@ def add_summary_row(data_product, bkhd_source_ws, product_name, details, is_new_
         try:
             dt_obj = datetime.strptime(value_C, '%Y-%m-%d')
             date_part = f"{dt_obj.day:02d}{dt_obj.month:02d}"
-        except ValueError:
-            pass 
+        except ValueError: pass 
     
     if details['b5_val'] == "Nguyễn Huệ": new_row[3] = f"HNBK{date_part}.{suffix_d}"
     elif details['b5_val'] == "Mai Linh": new_row[3] = f"MMBK{date_part}.{suffix_d}"
@@ -301,34 +339,58 @@ def add_summary_row(data_product, bkhd_source_ws, product_name, details, is_new_
     new_row[12] = total_qty
     new_row[13] = max((to_float(r[13]) for r in data_product), default=0.0)
 
-    tien_hang_hd = sum(to_float(r[13]) for r in bkhd_source_ws.iter_rows(min_row=5, values_only=True) if clean_string(str(r[5])) == "Người mua không lấy hóa đơn" and clean_string(str(r[8])) == product_name)
-    tienthue_hd = sum(to_float(r[14]) for r in bkhd_source_ws.iter_rows(min_row=5, values_only=True) if clean_string(str(r[5])) == "Người mua không lấy hóa đơn" and clean_string(str(r[8])) == product_name)
+    # Các tính toán này giữ nguyên logic gốc, chỉ dùng để lấy tổng tiền hàng và tiền thuế từ file nguồn
+    tien_hang_hd = sum(to_float(r[11]) for r in bkhd_source_ws.iter_rows(min_row=5, values_only=True) if r[5] is not None and clean_string(str(r[5])) == "Người mua không lấy hóa đơn" and clean_string(str(r[8])) == product_name)
+    tienthue_hd = sum(to_float(r[12]) for r in bkhd_source_ws.iter_rows(min_row=5, values_only=True) if r[5] is not None and clean_string(str(r[5])) == "Người mua không lấy hóa đơn" and clean_string(str(r[8])) == product_name)
     
-    price_per_liter = {"Xăng E5 RON 92-II": 1900, "Xăng RON 95-III": 2000, "Dầu DO 0,05S-II": 1000, "Dầu DO 0,001S-V": 1000}.get(product_name, 0)
-    new_row[14] = tien_hang_hd - round(total_qty * price_per_liter, 0)
+    price_per_liter = details['tmt_lookup_table'].get(product_name.lower(), 0) # Đây là giá trị TMT
+    new_row[14] = tien_hang_hd - tienthue_hd # Tiền hàng chưa thuế
     
-    new_row[17] = 10
+    # Gán mã thuế động
+    new_row[17] = product_tax
+    
     new_row[18] = details['s_lookup_table'].get(details['h5_val'], '')
     new_row[19] = details['t_lookup_regular'].get(details['h5_val'], '')
     new_row[20] = details['u_value']
     new_row[21] = details['v_lookup_table'].get(details['h5_val'], '')
     new_row[23] = details['store_specific_x_lookup'].get(details['b5_val'], {}).get(product_name.lower(), '')
     new_row[31] = f"Khách mua {product_name} không lấy hóa đơn"
-    new_row[36] = tienthue_hd - round(total_qty * price_per_liter * 0.1, 0)
+    
+    # Cập nhật công thức tính tiền thuế bằng mã thuế động
+    tax_rate_decimal = product_tax / 100.0
+    new_row[36] = tienthue_hd - round(total_qty * price_per_liter * tax_rate_decimal, 0)
+    
     return new_row
+# --- ***** END OF CHANGE ***** ---
 
+
+# --- ***** START OF CHANGE: USE DYNAMIC TAX RATE ***** ---
 def create_tmt_row(original_row, tmt_value, details):
+    """Tạo dòng Thuế môi trường, kế thừa mã thuế từ dòng gốc."""
     tmt_row = list(original_row)
+    
+    # Lấy mã thuế từ dòng gốc
+    ma_thue_percent = to_float(original_row[17])
+    tax_rate_decimal = ma_thue_percent / 100.0
+
     tmt_row[6], tmt_row[7], tmt_row[8] = "TMT", "Thuế bảo vệ môi trường", "Lít"
     tmt_row[9] = details['g5_val']
     tmt_row[13] = tmt_value
     tmt_row[14] = round(tmt_value * to_float(original_row[12]), 0)
-    tmt_row[17] = 10
+    
+    # Kế thừa mã thuế
+    tmt_row[17] = ma_thue_percent
+    
     tmt_row[18] = details['s_lookup_table'].get(details['h5_val'], '')
     tmt_row[19] = details['t_lookup_tmt'].get(details['h5_val'], '')
     tmt_row[20], tmt_row[21] = details['u_value'], details['v_lookup_table'].get(details['h5_val'], '')
     tmt_row[31] = ""
-    tmt_row[36] = round(tmt_value * to_float(original_row[12]) * 0.1, 0)
+    
+    # Cập nhật công thức tính tiền thuế bằng mã thuế động
+    tmt_row[36] = round(tmt_value * to_float(original_row[12]) * tax_rate_decimal, 0)
+    
+    # Xóa các trường không cần thiết
     for idx in [5, 10, 11, 15, 16, 22, 24, 25, 26, 27, 28, 29, 30, 32, 33, 34, 35]:
         if idx < len(tmt_row): tmt_row[idx] = ''
     return tmt_row
+# --- ***** END OF CHANGE ***** ---
