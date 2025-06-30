@@ -105,8 +105,8 @@ def _create_excel_buffer(processed_rows):
     
     return output_buffer
 
-# --- Hàm _generate_upsse_rows (Không thay đổi) ---
-def _generate_upsse_rows(source_data_rows, static_data, selected_chxd):
+
+def _generate_upsse_rows(source_data_rows, static_data, selected_chxd, is_new_price_period=False):
     """
     Hàm chính để xử lý các dòng từ file bảng kê và tạo ra các dòng cho file UpSSE.
     """
@@ -119,8 +119,6 @@ def _generate_upsse_rows(source_data_rows, static_data, selected_chxd):
     final_rows, all_tmt_rows = [], []
     no_invoice_rows = {p: [] for p in ["Xăng E5 RON 92-II", "Xăng RON 95-III", "Dầu DO 0,05S-II", "Dầu DO 0,001S-V"]}
     product_tax_map = {}
-
-    headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
     
     for row_idx, row in enumerate(source_data_rows):
         if not row or row[0] is None: continue
@@ -149,7 +147,7 @@ def _generate_upsse_rows(source_data_rows, static_data, selected_chxd):
     for product, original_rows in no_invoice_rows.items():
         if original_rows:
             product_tax = product_tax_map.get(product, 8.0)
-            summary_row = add_summary_row(original_rows, product, details, product_tax, selected_chxd)
+            summary_row = add_summary_row(original_rows, product, details, product_tax, selected_chxd, is_new_price_period)
             final_rows.append(summary_row)
             
             tmt_unit = details['tmt_lookup_table'].get(product.lower(), 0)
@@ -161,7 +159,7 @@ def _generate_upsse_rows(source_data_rows, static_data, selected_chxd):
     final_rows.extend(all_tmt_rows)
     return final_rows
 
-# --- ***** START OF CHANGE: CORRECTED ADDRESS/TAX ID ASSIGNMENT ***** ---
+# --- ***** START OF CHANGE: RESTORED ORIGINAL SWAPPED LOGIC ***** ---
 def _process_single_row(row, details, selected_chxd):
     """Hàm phụ để xử lý một dòng hóa đơn đơn lẻ."""
     headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
@@ -173,8 +171,9 @@ def _process_single_row(row, details, selected_chxd):
         ngay_hd_raw = row[3]
         so_ct = clean_string(str(row[1]))
         so_hd = clean_string(str(row[2]))
-        dia_chi = clean_string(str(row[6])) # Dữ liệu từ cột G
-        mst = clean_string(str(row[7]))     # Dữ liệu từ cột H
+        # Đọc dữ liệu gốc với tên biến rõ ràng
+        dia_chi_goc = clean_string(str(row[6])) # Dữ liệu từ cột G (Địa chỉ)
+        mst_goc = clean_string(str(row[7]))     # Dữ liệu từ cột H (Mã số thuế)
         product_name = clean_string(str(row[8]))
         so_luong = to_float(row[10])
         don_gia_vat = to_float(row[11])
@@ -218,18 +217,18 @@ def _process_single_row(row, details, selected_chxd):
     upsse_row[23] = details['store_specific_x_lookup'].get(selected_chxd, {}).get(product_name.lower(), '')
     upsse_row[31] = upsse_row[1]
     
-    # **SỬA LỖI**: Tráo đổi lại giá trị cho đúng với logic gốc
-    # Cột "Địa chỉ (thuế)" (AG) lấy giá trị Mã số thuế (cột H)
-    # Cột "Mã số thuế" (AH) lấy giá trị Địa chỉ (cột G)
-    upsse_row[32] = mst
-    upsse_row[33] = dia_chi
+    # **SỬA LỖI**: Phục hồi logic tráo đổi giá trị như mã nguồn gốc
+    # Cột "Địa chỉ (thuế)" (AG, index 32) lấy giá trị Mã số thuế gốc (cột H)
+    upsse_row[32] = mst_goc
+    # Cột "Mã số thuế" (AH, index 33) lấy giá trị Địa chỉ gốc (cột G)
+    upsse_row[33] = dia_chi_goc
     
     upsse_row[36] = tien_thue_source - round(so_luong * tmt_value * tax_rate_decimal, 0)
     
     return upsse_row
 # --- ***** END OF CHANGE ***** ---
 
-# --- Hàm process_file (Không thay đổi) ---
+
 def process_file_with_price_periods(uploaded_file_content, static_data, selected_chxd, price_periods, new_price_invoice_number):
     try:
         bkhd_wb = load_workbook(io.BytesIO(uploaded_file_content), data_only=True)
@@ -248,7 +247,7 @@ def process_file_with_price_periods(uploaded_file_content, static_data, selected
             )
         all_source_rows = list(bkhd_ws.iter_rows(min_row=5, values_only=True))
         if price_periods == '1':
-            processed_rows = _generate_upsse_rows(all_source_rows, static_data, selected_chxd)
+            processed_rows = _generate_upsse_rows(all_source_rows, static_data, selected_chxd, is_new_price_period=False)
             if not processed_rows: raise ValueError("Không có dữ liệu hợp lệ để xử lý trong file tải lên.")
             return _create_excel_buffer(processed_rows)
         else:
@@ -258,18 +257,21 @@ def process_file_with_price_periods(uploaded_file_content, static_data, selected
                     split_index = i
                     break
             if split_index == -1: raise ValueError(f"Không tìm thấy số hóa đơn '{new_price_invoice_number}' để chia giai đoạn giá.")
+            
             old_price_rows = all_source_rows[:split_index]
             new_price_rows = all_source_rows[split_index:]
-            buffer_new = _create_excel_buffer(_generate_upsse_rows(new_price_rows, static_data, selected_chxd))
-            buffer_old = _create_excel_buffer(_generate_upsse_rows(old_price_rows, static_data, selected_chxd))
+
+            buffer_new = _create_excel_buffer(_generate_upsse_rows(new_price_rows, static_data, selected_chxd, is_new_price_period=True))
+            buffer_old = _create_excel_buffer(_generate_upsse_rows(old_price_rows, static_data, selected_chxd, is_new_price_period=False))
+            
             if not buffer_new and not buffer_old: raise ValueError("Không có dữ liệu hợp lệ để xử lý trong file tải lên.")
             return {'new': buffer_new, 'old': buffer_old}
     except Exception as e:
         print(f"Error during processing: {e}")
         raise e
 
-# --- Hàm add_summary_row (Không thay đổi) ---
-def add_summary_row(original_source_rows, product_name, details, product_tax, selected_chxd):
+
+def add_summary_row(original_source_rows, product_name, details, product_tax, selected_chxd, is_new_price_period=False):
     """
     Tạo dòng tổng hợp bằng cách tính toán trên tổng dữ liệu gốc để tránh sai số làm tròn.
     """
@@ -296,7 +298,12 @@ def add_summary_row(original_source_rows, product_name, details, product_tax, se
     
     value_C = clean_string(new_row[2])
     value_E = clean_string(new_row[4])
-    suffix_d_map = {"Xăng E5 RON 92-II": "1", "Xăng RON 95-III": "2", "Dầu DO 0,05S-II": "3", "Dầu DO 0,001S-V": "4"}
+
+    if is_new_price_period:
+        suffix_d_map = {"Xăng E5 RON 92-II": "5", "Xăng RON 95-III": "6", "Dầu DO 0,05S-II": "7", "Dầu DO 0,001S-V": "8"}
+    else:
+        suffix_d_map = {"Xăng E5 RON 92-II": "1", "Xăng RON 95-III": "2", "Dầu DO 0,05S-II": "3", "Dầu DO 0,001S-V": "4"}
+    
     suffix_d = suffix_d_map.get(product_name, "")
     date_part = ""
     if value_C and len(value_C) >= 10:
@@ -332,7 +339,7 @@ def add_summary_row(original_source_rows, product_name, details, product_tax, se
     
     return new_row
 
-# --- Hàm create_tmt_row (Không thay đổi) ---
+
 def create_tmt_row(original_row, tmt_value, details):
     tmt_row = list(original_row)
     ma_thue_percent = to_float(original_row[17])
