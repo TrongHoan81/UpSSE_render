@@ -84,16 +84,25 @@ def _create_excel_buffer(processed_rows):
     for r_data in processed_rows: output_ws.append(r_data)
 
     date_style = NamedStyle(name="date_style", number_format='DD/MM/YYYY')
+    # Định dạng cột Mã Thuế (R) là Text
+    text_style = NamedStyle(name='text_style', number_format='@')
+    
     for row_index in range(6, output_ws.max_row + 1):
-        cell = output_ws[f'C{row_index}']
-        if isinstance(cell.value, str) and '-' in cell.value:
+        # Định dạng ngày
+        cell_date = output_ws[f'C{row_index}']
+        if isinstance(cell_date.value, str) and '-' in cell_date.value:
             try:
-                date_obj = datetime.strptime(cell.value, '%Y-%m-%d')
-                cell.value = date_obj 
-                cell.style = date_style 
+                date_obj = datetime.strptime(cell_date.value, '%Y-%m-%d')
+                cell_date.value = date_obj 
+                cell_date.style = date_style 
             except (ValueError, TypeError): pass
-        elif isinstance(cell.value, datetime):
-            cell.style = date_style
+        elif isinstance(cell_date.value, datetime):
+            cell_date.style = date_style
+        
+        # Định dạng text cho cột Mã Thuế
+        cell_tax_code = output_ws[f'R{row_index}']
+        cell_tax_code.style = text_style
+
 
     output_ws.column_dimensions['B'].width = 35
     output_ws.column_dimensions['C'].width = 12
@@ -159,7 +168,7 @@ def _generate_upsse_rows(source_data_rows, static_data, selected_chxd, is_new_pr
     final_rows.extend(all_tmt_rows)
     return final_rows
 
-# --- ***** START OF CHANGE: RESTORED ORIGINAL SWAPPED LOGIC ***** ---
+# --- ***** START OF CHANGE: FORMAT TAX CODE ***** ---
 def _process_single_row(row, details, selected_chxd):
     """Hàm phụ để xử lý một dòng hóa đơn đơn lẻ."""
     headers = ["Mã khách", "Tên khách hàng", "Ngày", "Số hóa đơn", "Ký hiệu", "Diễn giải", "Mã hàng", "Tên mặt hàng", "Đvt", "Mã kho", "Mã vị trí", "Mã lô", "Số lượng", "Giá bán", "Tiền hàng", "Mã nt", "Tỷ giá", "Mã thuế", "Tk nợ", "Tk doanh thu", "Tk giá vốn", "Tk thuế có", "Cục thuế", "Vụ việc", "Bộ phận", "Lsx", "Sản phẩm", "Hợp đồng", "Phí", "Khế ước", "Nhân viên bán", "Tên KH(thuế)", "Địa chỉ (thuế)", "Mã số Thuế", "Nhóm Hàng", "Ghi chú", "Tiền thuế"]
@@ -171,9 +180,8 @@ def _process_single_row(row, details, selected_chxd):
         ngay_hd_raw = row[3]
         so_ct = clean_string(str(row[1]))
         so_hd = clean_string(str(row[2]))
-        # Đọc dữ liệu gốc với tên biến rõ ràng
-        dia_chi_goc = clean_string(str(row[6])) # Dữ liệu từ cột G (Địa chỉ)
-        mst_goc = clean_string(str(row[7]))     # Dữ liệu từ cột H (Mã số thuế)
+        dia_chi_goc = clean_string(str(row[6]))
+        mst_goc = clean_string(str(row[7]))
         product_name = clean_string(str(row[8]))
         so_luong = to_float(row[10])
         don_gia_vat = to_float(row[11])
@@ -208,7 +216,9 @@ def _process_single_row(row, details, selected_chxd):
 
     upsse_row[13] = round(don_gia_vat / (1 + tax_rate_decimal) - tmt_value, 2)
     upsse_row[14] = tien_hang_source - round(tmt_value * so_luong)
-    upsse_row[17] = ma_thue_percent
+    
+    # Định dạng mã thuế thành chuỗi 2 chữ số (vd: "08", "10")
+    upsse_row[17] = f'{int(ma_thue_percent):02d}'
     
     upsse_row[18] = details['s_lookup_table'].get(details['h5_val'], '')
     upsse_row[19] = details['t_lookup_regular'].get(details['h5_val'], '')
@@ -217,10 +227,7 @@ def _process_single_row(row, details, selected_chxd):
     upsse_row[23] = details['store_specific_x_lookup'].get(selected_chxd, {}).get(product_name.lower(), '')
     upsse_row[31] = upsse_row[1]
     
-    # **SỬA LỖI**: Phục hồi logic tráo đổi giá trị như mã nguồn gốc
-    # Cột "Địa chỉ (thuế)" (AG, index 32) lấy giá trị Mã số thuế gốc (cột H)
     upsse_row[32] = mst_goc
-    # Cột "Mã số thuế" (AH, index 33) lấy giá trị Địa chỉ gốc (cột G)
     upsse_row[33] = dia_chi_goc
     
     upsse_row[36] = tien_thue_source - round(so_luong * tmt_value * tax_rate_decimal, 0)
@@ -270,7 +277,7 @@ def process_file_with_price_periods(uploaded_file_content, static_data, selected
         print(f"Error during processing: {e}")
         raise e
 
-
+# --- ***** START OF CHANGE: FORMAT TAX CODE ***** ---
 def add_summary_row(original_source_rows, product_name, details, product_tax, selected_chxd, is_new_price_period=False):
     """
     Tạo dòng tổng hợp bằng cách tính toán trên tổng dữ liệu gốc để tránh sai số làm tròn.
@@ -329,7 +336,9 @@ def add_summary_row(original_source_rows, product_name, details, product_tax, se
     new_row[14] = total_thanh_tien_source - round(tmt_value * total_qty)
     new_row[36] = total_tien_thue_source - round(total_qty * tmt_value * tax_rate_decimal, 0)
     
-    new_row[17] = product_tax
+    # Định dạng mã thuế thành chuỗi 2 chữ số (vd: "08", "10")
+    new_row[17] = f'{int(product_tax):02d}'
+    
     new_row[18] = details['s_lookup_table'].get(details['h5_val'], '')
     new_row[19] = details['t_lookup_regular'].get(details['h5_val'], '')
     new_row[20] = details['u_value']
@@ -338,17 +347,26 @@ def add_summary_row(original_source_rows, product_name, details, product_tax, se
     new_row[31] = f"Khách mua {product_name} không lấy hóa đơn"
     
     return new_row
+# --- ***** END OF CHANGE ***** ---
 
-
+# --- ***** START OF CHANGE: FORMAT TAX CODE ***** ---
 def create_tmt_row(original_row, tmt_value, details):
+    """Tạo dòng Thuế môi trường, kế thừa mã thuế từ dòng gốc."""
     tmt_row = list(original_row)
-    ma_thue_percent = to_float(original_row[17])
-    tax_rate_decimal = ma_thue_percent / 100.0
+    
+    # original_row[17] đã là một chuỗi được định dạng (vd: "08")
+    # Chuyển đổi nó thành số để tính toán
+    ma_thue_for_calc = to_float(original_row[17])
+    tax_rate_decimal = ma_thue_for_calc / 100.0
+
     tmt_row[6], tmt_row[7], tmt_row[8] = "TMT", "Thuế bảo vệ môi trường", "Lít"
     tmt_row[9] = details['g5_val']
     tmt_row[13] = tmt_value
     tmt_row[14] = round(tmt_value * to_float(original_row[12]), 0)
-    tmt_row[17] = ma_thue_percent
+    
+    # Giữ nguyên giá trị mã thuế đã được định dạng từ dòng gốc
+    # Không cần gán lại tmt_row[17] vì nó đã đúng
+    
     tmt_row[18] = details['s_lookup_table'].get(details['h5_val'], '')
     tmt_row[19] = details['t_lookup_tmt'].get(details['h5_val'], '')
     tmt_row[20], tmt_row[21] = details['u_value'], details['v_lookup_table'].get(details['h5_val'], '')
@@ -357,3 +375,4 @@ def create_tmt_row(original_row, tmt_value, details):
     for idx in [5, 10, 11, 15, 16, 22, 24, 25, 26, 27, 28, 29, 30, 32, 33, 34, 35]:
         if idx < len(tmt_row): tmt_row[idx] = ''
     return tmt_row
+# --- ***** END OF CHANGE ***** ---
