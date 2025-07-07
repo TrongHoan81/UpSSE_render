@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Công cụ đồng bộ SSE</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Analytics Tracking Code -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-1ZG44VNZQ9"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+    
+      gtag('config', 'G-1ZG44VNZQ9');
+    </script>
+    <!-- End Google Analytics Tracking Code -->
+
     <!-- Thư viện để đọc file Excel trên trình duyệt -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     
@@ -91,6 +103,17 @@
                         <option value="{{ item }}" {% if item == form_data.selected_chxd %}selected{% endif %}>{{ item }}</option>
                     {% endfor %}
                 </select>
+                
+                <!-- Khung hướng dẫn mới được thêm vào -->
+                <div class="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <h4 class="text-sm font-semibold text-blue-800 mb-2">Hướng dẫn sử dụng:</h4>
+                    <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
+                        <li>Bạn có thể tải file bảng kê từ POS hoặc HDDT PVOIL, chương trình sẽ tự nhận diện và chạy ra kết quả.</li>
+                        <li>Nếu tải lên bảng kê từ POS, bạn cần đảm bảo đã “Mở” và “Lưu” file trước khi tải lên.</li>
+                        <li>Chức năng xử lý cho “2 giai đoạn giá” chỉ hỗ trợ bảng kê từ HDDT PVOIL.</li>
+                        <li>Hãy kiểm tra kỹ lưỡng trước và sau khi tải lên SSE.</li>
+                    </ul>
+                </div>
             </div>
 
             <!-- Trường tải file chỉ hiển thị khi không cần xác nhận ngày -->
