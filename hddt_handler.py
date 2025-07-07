@@ -93,7 +93,6 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
 
     def _generate_upsse_from_hddt_rows(rows_to_process, static_data, selected_chxd, final_date, summary_suffix_map):
         if not rows_to_process: return None
-        final_date_str = final_date.strftime('%d/%m/%Y')
         khu_vuc, ma_kho = static_data['chxd_to_khuvuc_map'].get(selected_chxd), static_data['tk_mk'].get(selected_chxd)
         tk_no, tk_doanh_thu, tk_gia_von, tk_thue_co = static_data['tk_no_map'].get(khu_vuc), static_data['tk_doanh_thu_map'].get(khu_vuc), static_data['tk_gia_von_value'], static_data['tk_thue_co_map'].get(khu_vuc)
         original_invoice_rows, bvmt_rows, summary_data = [], [], {}
@@ -104,7 +103,7 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
             is_anonymous, is_petrol = ("không lấy hóa đơn" in ten_kh.lower()), (ten_mat_hang in static_data['phi_bvmt_map'])
             if not is_anonymous or not is_petrol:
                 new_upsse_row = [''] * 37
-                new_upsse_row[9], new_upsse_row[1], new_upsse_row[31], new_upsse_row[2] = ma_kho, ten_kh, ten_kh, final_date_str
+                new_upsse_row[9], new_upsse_row[1], new_upsse_row[31], new_upsse_row[2] = ma_kho, ten_kh, ten_kh, final_date
                 so_hd_goc = str(bkhd_row[19] or '').strip()
                 new_upsse_row[3] = f"HN{so_hd_goc[-6:]}" if selected_chxd == "Nguyễn Huệ" else f"{(str(bkhd_row[18] or '').strip())[-2:]}{so_hd_goc[-6:]}"
                 new_upsse_row[4] = _clean_string_hddt(bkhd_row[17]) + _clean_string_hddt(bkhd_row[18])
@@ -146,7 +145,7 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
             TH_TMT, TT_TMT = round(phi_bvmt * total_sl), round(phi_bvmt * total_sl * thue_suat)
             TT_goc, TH_goc = TTT - TT_TMT, TDT - TH_TMT - (TTT - TT_TMT) - TT_TMT
             summary_row[0], summary_row[1] = ma_kho, f"Khách hàng mua {product} không lấy hóa đơn"
-            summary_row[31], summary_row[2] = summary_row[1], final_date_str
+            summary_row[31], summary_row[2] = summary_row[1], final_date
             summary_row[3] = f"{prefix}BK.{final_date.strftime('%d.%m')}.{summary_suffix_map.get(product, '')}"
             summary_row[4] = first_data['mau_so'] + first_data['ky_hieu']
             summary_row[5] = f"Xuất bán hàng theo hóa đơn số {summary_row[3]}"
@@ -157,8 +156,23 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
             summary_row[36] = round(TT_goc)
             original_invoice_rows.append(summary_row)
             bvmt_rows.append(_create_hddt_bvmt_row(summary_row, phi_bvmt, static_data, khu_vuc))
+        
         upsse_wb = _create_upsse_workbook_hddt()
-        for row_data in original_invoice_rows + bvmt_rows: upsse_wb.active.append(row_data)
+        ws = upsse_wb.active
+        for row_data in original_invoice_rows + bvmt_rows:
+            ws.append(row_data)
+
+        # Áp dụng định dạng sau khi đã ghi hết dữ liệu
+        for row_index in range(6, ws.max_row + 1):
+            # Áp dụng định dạng ngày 'dd/mm/yyyy' cho cột C
+            date_cell = ws[f'C{row_index}']
+            if isinstance(date_cell.value, datetime):
+                date_cell.number_format = 'dd/mm/yyyy'
+
+            # Áp dụng định dạng text cho cột R (Mã thuế) để giữ số 0 đứng trước
+            text_cell = ws[f'R{row_index}']
+            text_cell.number_format = '@'
+            
         output_buffer = io.BytesIO()
         upsse_wb.save(output_buffer)
         output_buffer.seek(0)
