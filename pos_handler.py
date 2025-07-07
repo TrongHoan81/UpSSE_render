@@ -60,9 +60,18 @@ def _pos_create_excel_buffer(processed_rows):
     for _ in range(4): output_ws.append([''] * len(headers))
     output_ws.append(headers)
     for r_data in processed_rows: output_ws.append(r_data)
-    text_style = NamedStyle(name='text_style', number_format='@')
+
+    # Áp dụng định dạng trực tiếp cho từng ô sau khi ghi dữ liệu
     for row_index in range(6, output_ws.max_row + 1):
-        output_ws[f'R{row_index}'].style = text_style
+        # Áp dụng định dạng ngày 'dd/mm/yyyy' cho cột C
+        date_cell = output_ws[f'C{row_index}']
+        if isinstance(date_cell.value, datetime):
+            date_cell.number_format = 'dd/mm/yyyy'
+        
+        # Áp dụng định dạng text cho cột R
+        text_cell = output_ws[f'R{row_index}']
+        text_cell.number_format = '@'
+
     output_ws.column_dimensions['B'].width = 35
     output_ws.column_dimensions['C'].width = 12
     output_ws.column_dimensions['D'].width = 12
@@ -70,6 +79,20 @@ def _pos_create_excel_buffer(processed_rows):
     output_wb.save(output_buffer)
     output_buffer.seek(0)
     return output_buffer
+
+def _convert_to_datetime(date_input):
+    """Hàm trợ giúp để chuyển đổi đầu vào thành đối tượng datetime."""
+    if isinstance(date_input, datetime):
+        return date_input
+    if isinstance(date_input, str):
+        try:
+            # Tách phần ngày và thử chuyển đổi từ định dạng dd-mm-yyyy
+            date_part = date_input.split(' ')[0]
+            return datetime.strptime(date_part, '%d-%m-%Y')
+        except (ValueError, TypeError):
+            # Nếu thất bại, trả về chuỗi gốc để tránh lỗi
+            return date_input
+    return date_input
 
 def _pos_process_single_row(row, details, selected_chxd):
     upsse_row = [''] * 37
@@ -85,10 +108,8 @@ def _pos_process_single_row(row, details, selected_chxd):
     upsse_row[0] = ma_kh if ma_kh and len(ma_kh) <= 9 else details['g5_val']
     upsse_row[1] = ten_kh
     
-    if isinstance(ngay_hd_raw, datetime):
-        upsse_row[2] = ngay_hd_raw.strftime('%d/%m/%Y')
-    else:
-        upsse_row[2] = str(ngay_hd_raw).split(' ')[0]
+    # Chuẩn hóa ngày thành đối tượng datetime
+    upsse_row[2] = _convert_to_datetime(ngay_hd_raw)
 
     if details['b5_val'] == "Nguyễn Huệ": upsse_row[3] = f"HN{so_hd[-6:]}"
     elif details['b5_val'] == "Mai Linh": upsse_row[3] = f"MM{so_hd[-6:]}"
@@ -145,21 +166,18 @@ def _pos_add_summary_row(original_source_rows, product_name, details, product_ta
     new_row[0] = details['g5_val']
     new_row[1] = f"Khách hàng mua {product_name} không lấy hóa đơn"
 
-    if isinstance(ngay_hd_raw, datetime):
-        new_row[2] = ngay_hd_raw.strftime('%d/%m/%Y')
-    else:
-        new_row[2] = str(ngay_hd_raw).split(' ')[0]
+    # Chuẩn hóa ngày thành đối tượng datetime
+    new_row[2] = _convert_to_datetime(ngay_hd_raw)
 
     new_row[4] = f"1{so_ct}" if so_ct else ''
     value_E = _pos_clean_string(new_row[4])
     suffix_d_map = {"Xăng E5 RON 92-II": "5" if is_new_price_period else "1", "Xăng RON 95-III": "6" if is_new_price_period else "2", "Dầu DO 0,05S-II": "7" if is_new_price_period else "3", "Dầu DO 0,001S-V": "8" if is_new_price_period else "4"}
     suffix_d = suffix_d_map.get(product_name, "")
     date_part = ""
-    try:
-        dt_obj = datetime.strptime(new_row[2], '%d/%m/%Y')
+    
+    dt_obj = new_row[2]
+    if isinstance(dt_obj, datetime):
         date_part = f"{dt_obj.day:02d}{dt_obj.month:02d}"
-    except (ValueError, TypeError):
-        pass
     
     if details['b5_val'] == "Nguyễn Huệ": new_row[3] = f"HNBK{date_part}.{suffix_d}"
     elif details['b5_val'] == "Mai Linh": new_row[3] = f"MMBK{date_part}.{suffix_d}"
