@@ -191,6 +191,7 @@
 
                 {% if reconciliation_data %}
                 <div id="reconciliation-results" class="mt-8 space-y-8">
+                    
                     <div class="border-t-2 pt-6">
                         <h3 class="text-xl font-bold text-gray-800 mb-4">1. Đối soát tổng thể theo FKEY</h3>
                         <div class="overflow-x-auto rounded-lg border border-gray-200">
@@ -232,21 +233,6 @@
                         <div class="overflow-x-auto rounded-lg border border-gray-200">
                              <table class="min-w-full divide-y-2 divide-gray-200 bg-white text-sm">
                                 <tbody class="divide-y divide-gray-200">
-                                    <tr>
-                                        <td class="table-cell-title">Ngày trên từng hóa đơn</td>
-                                        <td class="table-cell-data">
-                                            {% if not reconciliation_data.detailed_mismatches.dates %}
-                                                <span class="font-semibold text-green-700">Khớp</span>
-                                            {% else %}
-                                                <span class="font-semibold text-red-700">Lệch tại các hóa đơn sau:</span>
-                                                <ul class="list-disc list-inside mt-1">
-                                                {% for mismatch in reconciliation_data.detailed_mismatches.dates %}
-                                                    <li class="mismatch-fkeys">Số HĐ: {{ mismatch.invoice_number }} | Ngày HĐ: {{ mismatch.invoice_date }} | FKEY: {{ mismatch.fkey }}</li>
-                                                {% endfor %}
-                                                </ul>
-                                            {% endif %}
-                                        </td>
-                                    </tr>
                                     <tr>
                                         <td class="table-cell-title">Số lượng trên từng hóa đơn</td>
                                         <td class="table-cell-data">
