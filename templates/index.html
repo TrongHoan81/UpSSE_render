@@ -46,7 +46,7 @@
                 <h2 class="text-xl font-bold text-red-600 leading-tight">DẦU KHÍ NAM ĐỊNH</h2>
             </div>
         </div>
-        <h1 class="text-base font-bold text-center text-blue-400 mb-6">Công cụ Xử lý Dữ liệu Xăng dầu</h1>
+        <h1 class="text-xl font-bold text-center text-blue-600 mb-6">PVOIL Nam Định - Công cụ xử lý dữ liệu</h1>
 
         <!-- Vùng thông báo -->
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -111,9 +111,10 @@
                         <div class="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                             <h4 class="text-sm font-semibold text-blue-800 mb-2">Hướng dẫn sử dụng:</h4>
                             <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
-                                <li>Tải file bảng kê từ POS hoặc HDDT PVOIL, chương trình sẽ tự nhận diện.</li>
+                                <li>Bạn có thể tải file bảng kê từ POS hoặc HDDT PVOIL, chương trình sẽ tự nhận diện.</li>
                                 <li>Nếu tải lên bảng kê từ POS, bạn cần đảm bảo đã “Mở” và “Lưu” file trước khi tải lên.</li>
                                 <li>Chức năng “2 giai đoạn giá” chỉ hỗ trợ bảng kê từ HDDT PVOIL.</li>
+                                <li class="font-semibold text-red-600">Đây chỉ là công cụ hỗ trợ nhập dữ liệu vào SSE nhanh hơn, bạn vẫn là người chịu trách nhiệm với dữ liệu của mình!</li>
                             </ul>
                         </div>
                     </div>
@@ -167,7 +168,8 @@
                             <h4 class="text-sm font-semibold text-green-800 mb-2">Hướng dẫn Đối soát:</h4>
                             <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
                                 <li>Tải lên file log bơm kết xuất từ phần mềm bán hàng (POS).</li>
-                                <li>Tải lên file bảng kê hóa đơn điện tử (HĐĐT) tương ứng.</li>
+                                <li>Tải lên file bảng kê hóa đơn điện tử (tại trang hddt.pvoil.vn) tương ứng.</li>
+                                <li class="font-semibold">Vì dung lượng của công cụ hạn chế, bạn chỉ nên chạy 1 đến 2 ngày trong 1 lần đối soát.</li>
                             </ul>
                         </div>
                     </div>
