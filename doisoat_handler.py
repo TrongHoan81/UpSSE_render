@@ -90,9 +90,15 @@ def _parse_log_bom_file(log_bom_bytes):
         ws = wb.active
         
         pump_logs = []
+        # *** THAY ĐỔI Ở ĐÂY ***
+        # Các loại giao dịch cần xuất hóa đơn
+        VALID_TRANSACTION_TYPES = ['bán lẻ', 'hợp đồng', 'khuyến mãi', 'trả trước']
+        
         for row_index, row_values in enumerate(ws.iter_rows(min_row=10, values_only=True), start=10):
             transaction_type = _clean_string(row_values[7] if len(row_values) > 7 else None)
-            if transaction_type.lower() not in ['bán lẻ', 'hợp đồng']:
+            
+            # Kiểm tra xem loại giao dịch có nằm trong danh sách hợp lệ không
+            if transaction_type.lower() not in VALID_TRANSACTION_TYPES:
                 continue
 
             fkey = _clean_string(row_values[14] if len(row_values) > 14 else None)
@@ -115,7 +121,7 @@ def _parse_log_bom_file(log_bom_bytes):
             })
             
         if not pump_logs:
-            raise ValueError("Không tìm thấy giao dịch 'Bán lẻ' hoặc 'Hợp đồng' nào trong file Log Bơm.")
+            raise ValueError("Không tìm thấy giao dịch nào cần xuất hóa đơn trong file Log Bơm.")
         return pump_logs
     except Exception as e:
         raise ValueError(f"Lỗi khi đọc file Log Bơm: {e}")
