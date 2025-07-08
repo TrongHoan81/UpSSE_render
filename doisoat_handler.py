@@ -7,32 +7,37 @@ from openpyxl import load_workbook
 
 # --- CÁC HÀM TIỆN ÍCH ---
 def _clean_string(s):
-    """Làm sạch chuỗi, loại bỏ khoảng trắng thừa và dấu nháy đơn ở đầu."""
     if s is None: return ""
     cleaned_s = str(s).strip()
     if cleaned_s.startswith("'"): cleaned_s = cleaned_s[1:]
     return re.sub(r'\s+', ' ', cleaned_s)
 
 def _to_float(value):
-    """Chuyển đổi giá trị sang kiểu float, xử lý lỗi nếu có."""
     if value is None: return 0.0
     try:
         return float(str(value).replace(',', '').strip())
     except (ValueError, TypeError): return 0.0
 
 def _format_number(num):
-    """Định dạng số với dấu phẩy ngăn cách hàng nghìn."""
     try:
         return f"{num:,.2f}"
     except (ValueError, TypeError):
         return "0.00"
 
+def _excel_date_to_datetime(excel_date):
+    """Chuyển đổi số ngày của Excel sang đối tượng datetime."""
+    if isinstance(excel_date, (int, float)):
+        try:
+            return pd.to_datetime(excel_date, unit='D', origin='1899-12-30').to_pydatetime()
+        except Exception:
+            return None
+    elif isinstance(excel_date, datetime):
+        return excel_date
+    return None
+
 # --- CÁC HÀM PHÂN TÍCH FILE ---
 
 def _parse_hddt_file(hddt_bytes):
-    """
-    Đọc file bảng kê HĐĐT, phân loại và trích xuất dữ liệu.
-    """
     try:
         wb = load_workbook(io.BytesIO(hddt_bytes), data_only=True)
         ws = wb.active
@@ -59,7 +64,8 @@ def _parse_hddt_file(hddt_bytes):
                 'item_name': item_name,
                 'quantity': quantity,
                 'total_amount': _to_float(row_values[16] if len(row_values) > 16 else None),
-                'invoice_date_raw': row_values[20] if len(row_values) > 20 else None,
+                'invoice_number': _clean_string(row_values[19] if len(row_values) > 19 else None), # Cột T
+                'invoice_date_raw': row_values[20] if len(row_values) > 20 else None, # Cột U
                 'source_row': row_index
             }
 
@@ -80,9 +86,6 @@ def _parse_hddt_file(hddt_bytes):
         raise ValueError(f"Lỗi khi đọc file Bảng kê HĐĐT: {e}")
 
 def _parse_log_bom_file(log_bom_bytes):
-    """
-    Đọc file log bơm, lọc các giao dịch bán hàng và trích xuất dữ liệu.
-    """
     try:
         wb = load_workbook(io.BytesIO(log_bom_bytes), data_only=True)
         ws = wb.active
@@ -147,72 +150,87 @@ def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd):
              raise ValueError("Không tìm thấy hóa đơn nào có FKEY bắt đầu bằng 'POS' để tiến hành đối soát.")
 
         # BƯỚC 2: Chuẩn bị dữ liệu để so sánh
-        log_fkeys = {log['fkey'] for log in log_bom_data}
-        hddt_fkey_counts = defaultdict(int)
-        hddt_fkeys_set = set()
-        for inv in hddt_invoices:
-            if inv['fkey']:
-                hddt_fkey_counts[inv['fkey']] += 1
-                hddt_fkeys_set.add(inv['fkey'])
+        log_map = {log['fkey']: log for log in log_bom_data}
+        hddt_map = {inv['fkey']: inv for inv in hddt_invoices}
+
+        log_fkeys = set(log_map.keys())
+        hddt_fkeys = set(hddt_map.keys())
 
         # BƯỚC 3: Tìm kiếm sự chênh lệch FKEY
-        missing_invoices = sorted(list(log_fkeys - hddt_fkeys_set)) # Log có, HĐĐT không có
-        extra_invoices_orphan = sorted(list(hddt_fkeys_set - log_fkeys)) # HĐĐT có, Log không có
-        
-        # Hóa đơn bị trùng FKEY (1 log xuất nhiều HĐ)
-        duplicate_invoices = sorted([fkey for fkey, count in hddt_fkey_counts.items() if count > 1])
-        
-        # Tổng hợp các hóa đơn xuất thừa
-        all_extra_invoices = sorted(list(set(extra_invoices_orphan + duplicate_invoices)))
+        missing_invoices_fkeys = sorted(list(log_fkeys - hddt_fkeys))
+        extra_invoices_fkeys = sorted(list(hddt_fkeys - log_fkeys))
+        common_fkeys = sorted(list(log_fkeys.intersection(hddt_fkeys)))
 
-        # BƯỚC 4: Tổng hợp và so sánh theo từng mặt hàng
-        item_summary = defaultdict(lambda: {
-            'quantity': {'pos': 0, 'hddt': 0},
-            'amount': {'pos': 0, 'hddt': 0}
-        })
+        # BƯỚC 4: So sánh chi tiết trên các FKEY chung
+        date_mismatches = []
+        quantity_mismatches = []
+        amount_mismatches = []
 
+        for fkey in common_fkeys:
+            log = log_map[fkey]
+            inv = hddt_map[fkey]
+            
+            inv_date = _excel_date_to_datetime(inv['invoice_date_raw'])
+            inv_date_str = inv_date.strftime('%d/%m/%Y') if inv_date else 'N/A'
+            
+            mismatch_info = {
+                'fkey': fkey,
+                'invoice_number': inv.get('invoice_number', 'N/A'),
+                'invoice_date': inv_date_str
+            }
+
+            # So sánh ngày
+            log_date = log['transaction_time'].date() if log.get('transaction_time') else None
+            if log_date and inv_date and log_date != inv_date.date():
+                date_mismatches.append(mismatch_info)
+
+            # So sánh số lượng
+            if abs(log['quantity'] - inv['quantity']) > 0.001:
+                quantity_mismatches.append(mismatch_info)
+
+            # So sánh thành tiền
+            if abs(log['total_amount'] - inv['total_amount']) > 1:
+                amount_mismatches.append(mismatch_info)
+                
+        # BƯỚC 5: Tổng hợp theo từng mặt hàng
+        item_summary = defaultdict(lambda: {'quantity': {'pos': 0, 'hddt': 0}, 'amount': {'pos': 0, 'hddt': 0}})
         for log in log_bom_data:
             item_summary[log['item_name']]['quantity']['pos'] += log['quantity']
             item_summary[log['item_name']]['amount']['pos'] += log['total_amount']
-
         for inv in hddt_invoices:
             item_summary[inv['item_name']]['quantity']['hddt'] += inv['quantity']
             item_summary[inv['item_name']]['amount']['hddt'] += inv['total_amount']
             
-        # Hoàn thiện dữ liệu so sánh theo mặt hàng
         final_item_summary = {}
         for name, data in item_summary.items():
             qty_diff = data['quantity']['pos'] - data['quantity']['hddt']
             amt_diff = data['amount']['pos'] - data['amount']['hddt']
             final_item_summary[name] = {
-                'quantity': {
-                    'pos': _format_number(data['quantity']['pos']),
-                    'hddt': _format_number(data['quantity']['hddt']),
-                    'difference': _format_number(qty_diff),
-                    'is_match': abs(qty_diff) < 0.001 # Cho phép sai số nhỏ
-                },
-                'amount': {
-                    'pos': _format_number(data['amount']['pos']),
-                    'hddt': _format_number(data['amount']['hddt']),
-                    'difference': _format_number(amt_diff),
-                    'is_match': abs(amt_diff) < 1 # Cho phép sai số nhỏ (ví dụ 1 đồng)
-                }
+                'quantity': {'pos': _format_number(data['quantity']['pos']), 'hddt': _format_number(data['quantity']['hddt']), 'difference': _format_number(qty_diff), 'is_match': abs(qty_diff) < 0.001},
+                'amount': {'pos': _format_number(data['amount']['pos']), 'hddt': _format_number(data['amount']['hddt']), 'difference': _format_number(amt_diff), 'is_match': abs(amt_diff) < 1}
             }
             
-        # BƯỚC 5: Tạo kết quả cuối cùng
+        # BƯỚC 6: Tạo kết quả cuối cùng
         count_diff = len(log_bom_data) - len(hddt_invoices)
         reconciliation_data = {
-            'count': {
-                'pos': len(log_bom_data), 
-                'hddt': len(hddt_invoices), 
-                'is_match': count_diff == 0 and not missing_invoices and not all_extra_invoices,
+            'summary': {
+                'pos_count': len(log_bom_data), 
+                'hddt_count': len(hddt_invoices), 
+                'is_match': count_diff == 0 and not missing_invoices_fkeys and not extra_invoices_fkeys,
                 'difference': count_diff,
-                'missing_pos': missing_invoices, # Log chưa xuất HĐ
-                'extra_hddt': all_extra_invoices # HĐ thừa (mồ côi + trùng lặp)
+                'missing_fkeys': missing_invoices_fkeys,
+                'extra_fkeys': extra_invoices_fkeys
             },
-            'items': final_item_summary,
-            'direct_petroleum_invoices': parsed_hddt_data['direct_petroleum_invoices'],
-            'other_invoices': parsed_hddt_data['other_invoices']
+            'detailed_mismatches': {
+                'dates': date_mismatches,
+                'quantities': quantity_mismatches,
+                'amounts': amount_mismatches
+            },
+            'item_comparison': final_item_summary,
+            'non_pos_invoices': {
+                'direct_petroleum': parsed_hddt_data['direct_petroleum_invoices'],
+                'others': parsed_hddt_data['other_invoices']
+            }
         }
         
         return reconciliation_data
