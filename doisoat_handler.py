@@ -25,7 +25,6 @@ def _format_number(num):
         return "0.00"
 
 def _excel_date_to_datetime(excel_date):
-    """Chuyển đổi số ngày của Excel sang đối tượng datetime."""
     if isinstance(excel_date, (int, float)):
         try:
             return pd.to_datetime(excel_date, unit='D', origin='1899-12-30').to_pydatetime()
@@ -64,8 +63,8 @@ def _parse_hddt_file(hddt_bytes):
                 'item_name': item_name,
                 'quantity': quantity,
                 'total_amount': _to_float(row_values[16] if len(row_values) > 16 else None),
-                'invoice_number': _clean_string(row_values[19] if len(row_values) > 19 else None), # Cột T
-                'invoice_date_raw': row_values[20] if len(row_values) > 20 else None, # Cột U
+                'invoice_number': _clean_string(row_values[19] if len(row_values) > 19 else None),
+                'invoice_date_raw': row_values[20] if len(row_values) > 20 else None,
                 'source_row': row_index
             }
 
@@ -103,29 +102,15 @@ def _parse_log_bom_file(log_bom_bytes):
                     f"Giao dịch '{transaction_type}' bắt buộc phải có mã H.Đơn (FKEY) ở cột O nhưng lại bị trống."
                 )
 
-            time_str = row_values[1] if len(row_values) > 1 else None
             item_name = _clean_string(row_values[3] if len(row_values) > 3 else None)
             quantity = _to_float(row_values[4] if len(row_values) > 4 else None)
             total_amount = _to_float(row_values[6] if len(row_values) > 6 else None)
-
-            transaction_time = None
-            if isinstance(time_str, datetime):
-                transaction_time = time_str
-            elif isinstance(time_str, str):
-                try:
-                    transaction_time = datetime.strptime(time_str, '%d/%m/%Y %H:%M:%S')
-                except ValueError:
-                    try:
-                        transaction_time = datetime.strptime(time_str, '%d/%m/%Y')
-                    except ValueError:
-                        pass
 
             pump_logs.append({
                 'fkey': fkey,
                 'item_name': item_name,
                 'quantity': quantity,
                 'total_amount': total_amount,
-                'transaction_time': transaction_time,
                 'source_row': row_index
             })
             
@@ -137,11 +122,7 @@ def _parse_log_bom_file(log_bom_bytes):
 
 
 def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd):
-    """
-    Thực hiện logic đối soát giữa file log bơm và file bảng kê HĐĐT.
-    """
     try:
-        # BƯỚC 1: Đọc và phân loại dữ liệu
         parsed_hddt_data = _parse_hddt_file(hddt_bytes)
         hddt_invoices = parsed_hddt_data['pos_invoices']
         log_bom_data = _parse_log_bom_file(log_bom_bytes)
@@ -149,20 +130,16 @@ def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd):
         if not hddt_invoices:
              raise ValueError("Không tìm thấy hóa đơn nào có FKEY bắt đầu bằng 'POS' để tiến hành đối soát.")
 
-        # BƯỚC 2: Chuẩn bị dữ liệu để so sánh
         log_map = {log['fkey']: log for log in log_bom_data}
         hddt_map = {inv['fkey']: inv for inv in hddt_invoices}
 
         log_fkeys = set(log_map.keys())
         hddt_fkeys = set(hddt_map.keys())
 
-        # BƯỚC 3: Tìm kiếm sự chênh lệch FKEY
         missing_invoices_fkeys = sorted(list(log_fkeys - hddt_fkeys))
         extra_invoices_fkeys = sorted(list(hddt_fkeys - log_fkeys))
         common_fkeys = sorted(list(log_fkeys.intersection(hddt_fkeys)))
 
-        # BƯỚC 4: So sánh chi tiết trên các FKEY chung
-        date_mismatches = []
         quantity_mismatches = []
         amount_mismatches = []
 
@@ -179,20 +156,12 @@ def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd):
                 'invoice_date': inv_date_str
             }
 
-            # So sánh ngày
-            log_date = log['transaction_time'].date() if log.get('transaction_time') else None
-            if log_date and inv_date and log_date != inv_date.date():
-                date_mismatches.append(mismatch_info)
-
-            # So sánh số lượng
             if abs(log['quantity'] - inv['quantity']) > 0.001:
                 quantity_mismatches.append(mismatch_info)
 
-            # So sánh thành tiền
             if abs(log['total_amount'] - inv['total_amount']) > 1:
                 amount_mismatches.append(mismatch_info)
                 
-        # BƯỚC 5: Tổng hợp theo từng mặt hàng
         item_summary = defaultdict(lambda: {'quantity': {'pos': 0, 'hddt': 0}, 'amount': {'pos': 0, 'hddt': 0}})
         for log in log_bom_data:
             item_summary[log['item_name']]['quantity']['pos'] += log['quantity']
@@ -210,7 +179,6 @@ def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd):
                 'amount': {'pos': _format_number(data['amount']['pos']), 'hddt': _format_number(data['amount']['hddt']), 'difference': _format_number(amt_diff), 'is_match': abs(amt_diff) < 1}
             }
             
-        # BƯỚC 6: Tạo kết quả cuối cùng
         count_diff = len(log_bom_data) - len(hddt_invoices)
         reconciliation_data = {
             'summary': {
@@ -222,7 +190,6 @@ def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd):
                 'extra_fkeys': extra_invoices_fkeys
             },
             'detailed_mismatches': {
-                'dates': date_mismatches,
                 'quantities': quantity_mismatches,
                 'amounts': amount_mismatches
             },
