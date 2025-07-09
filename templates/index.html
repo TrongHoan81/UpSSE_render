@@ -6,8 +6,19 @@
     <title>PVOIL Nam Định - Công cụ xử lý dữ liệu</title>
 
     <!-- === THÊM DÒNG NÀY ĐỂ THAY ĐỔI BIỂU TƯỢNG (FAVICON) === -->
-    <!-- Đảm bảo file logo của bạn tên là 'Logo1.png' và nằm trong thư mục 'static' -->
     <link rel="icon" href="{{ url_for('static', filename='Logo1.png') }}" type="image/png">
+
+    <!-- === MÃ THEO DÕI GOOGLE ANALYTICS (GA4) === -->
+    <!-- Đã cập nhật với mã đo lường của bạn -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-1ZG44VNZQ9"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'G-1ZG44VNZQ9');
+    </script>
+    <!-- ============================================= -->
     
     <script src="https://cdn.tailwindcss.com"></script>
     
