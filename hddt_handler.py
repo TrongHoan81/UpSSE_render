@@ -6,6 +6,7 @@ from openpyxl import load_workbook, Workbook
 
 def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_price_invoice_number, confirmed_date_str=None):
     
+    # --- Các hàm tiện ích nội bộ ---
     def _clean_string_hddt(s):
         if s is None: return ""
         cleaned_s = str(s).strip()
@@ -35,6 +36,7 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
         ws.append(headers)
         return wb
 
+    # --- Hàm nạp dữ liệu tĩnh ---
     def _load_static_data_hddt(data_file_path, mahh_file_path, dskh_file_path):
         try:
             static_data = {}
@@ -77,20 +79,29 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
         except FileNotFoundError as e: return None, f"Lỗi: Không tìm thấy file cấu hình. Chi tiết: {e.filename}"
         except Exception as e: return None, f"Lỗi khi đọc file cấu hình: {e}"
 
+    # --- Hàm tạo dòng BVMT (chỉ dùng cho hóa đơn riêng lẻ) ---
     def _create_hddt_bvmt_row(original_row, phi_bvmt, static_data, khu_vuc):
         bvmt_row = list(original_row)
         so_luong = _to_float_hddt(original_row[12])
         thue_suat = _to_float_hddt(original_row[17]) / 100.0 if original_row[17] else 0.0
+        
+        tien_hang_dong_bvmt = round(phi_bvmt * so_luong)
+        tien_thue_dong_bvmt = round(tien_hang_dong_bvmt * thue_suat)
+
         bvmt_row[6], bvmt_row[7] = "TMT", "Thuế bảo vệ môi trường"
-        bvmt_row[13], bvmt_row[14] = phi_bvmt, round(phi_bvmt * so_luong)
+        bvmt_row[13] = phi_bvmt
+        bvmt_row[14] = tien_hang_dong_bvmt
+        bvmt_row[36] = tien_thue_dong_bvmt
+        
         bvmt_row[18] = static_data.get('tk_no_bvmt_map', {}).get(khu_vuc)
         bvmt_row[19] = static_data.get('tk_dt_thue_bvmt_map', {}).get(khu_vuc)
         bvmt_row[20] = static_data.get('tk_gia_von_bvmt_value')
         bvmt_row[21] = static_data.get('tk_thue_co_bvmt_map', {}).get(khu_vuc)
-        bvmt_row[36] = round(phi_bvmt * so_luong * thue_suat)
+        
         for i in [5, 31, 32, 33]: bvmt_row[i] = ''
         return bvmt_row
 
+    # --- Hàm xử lý chính ---
     def _generate_upsse_from_hddt_rows(rows_to_process, static_data, selected_chxd, final_date, summary_suffix_map):
         if not rows_to_process: return None
         khu_vuc, ma_kho = static_data['chxd_to_khuvuc_map'].get(selected_chxd), static_data['tk_mk'].get(selected_chxd)
@@ -101,6 +112,8 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
             if _to_float_hddt(bkhd_row[8] if len(bkhd_row) > 8 else None) <= 0: continue
             ten_kh, ten_mat_hang = _clean_string_hddt(bkhd_row[3]), _clean_string_hddt(bkhd_row[6])
             is_anonymous, is_petrol = ("không lấy hóa đơn" in ten_kh.lower()), (ten_mat_hang in static_data['phi_bvmt_map'])
+            
+            # Xử lý hóa đơn riêng lẻ (KHÔNG THAY ĐỔI)
             if not is_anonymous or not is_petrol:
                 new_upsse_row = [''] * 37
                 new_upsse_row[9], new_upsse_row[1], new_upsse_row[31], new_upsse_row[2] = ma_kho, ten_kh, ten_kh, final_date
@@ -127,6 +140,8 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
                 new_upsse_row[0] = ma_kh_fast if ma_kh_fast and len(ma_kh_fast) < 12 else static_data['mst_to_makh_map'].get(mst_khach_hang, ma_kho)
                 original_invoice_rows.append(new_upsse_row)
                 if is_petrol: bvmt_rows.append(_create_hddt_bvmt_row(new_upsse_row, phi_bvmt, static_data, khu_vuc))
+            
+            # Gom dữ liệu khách vãng lai (KHÔNG THAY ĐỔI)
             else:
                 if not first_invoice_prefix_source: first_invoice_prefix_source = str(bkhd_row[18] or '').strip()
                 if ten_mat_hang not in summary_data:
@@ -134,42 +149,69 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
                 summary_data[ten_mat_hang]['sl'] += _to_float_hddt(bkhd_row[8])
                 summary_data[ten_mat_hang]['thue'] += _to_float_hddt(bkhd_row[15])
                 summary_data[ten_mat_hang]['phai_thu'] += _to_float_hddt(bkhd_row[16])
+        
+        # --- Tạo các dòng tổng hợp cho khách vãng lai ---
         prefix = first_invoice_prefix_source[-2:] if len(first_invoice_prefix_source) >= 2 else first_invoice_prefix_source
         for product, data in summary_data.items():
             summary_row = [''] * 37
-            first_data, total_sl = data['first_data'], data['sl']
-            phi_bvmt = static_data['phi_bvmt_map'].get(product, 0.0)
-            ma_thue = _format_tax_code_hddt(first_data['vat_raw'])
-            thue_suat = _to_float_hddt(ma_thue) / 100.0 if ma_thue else 0.0
-            TDT, TTT = data['phai_thu'], data['thue']
-            TH_TMT, TT_TMT = round(phi_bvmt * total_sl), round(phi_bvmt * total_sl * thue_suat)
-            TT_goc, TH_goc = TTT - TT_TMT, TDT - TH_TMT - (TTT - TT_TMT) - TT_TMT
+            first_data = data['first_data']
+            
+            # --- START: LOGIC TÍNH TOÁN "PHÂN BỔ TỪ TỔNG" ---
+            total_phai_thu = data['phai_thu']
+            total_tien_thue_gtgt = data['thue']
+            total_so_luong = data['sl']
+            phi_bvmt_unit = static_data['phi_bvmt_map'].get(product, 0.0)
+            ma_thue_str = _format_tax_code_hddt(first_data['vat_raw'])
+            thue_suat = _to_float_hddt(ma_thue_str) / 100.0 if ma_thue_str else 0.0
+
+            tien_hang_dong_bvmt = round(phi_bvmt_unit * total_so_luong)
+            tien_thue_dong_bvmt = round(tien_hang_dong_bvmt * thue_suat)
+            tien_thue_dong_goc = total_tien_thue_gtgt - tien_thue_dong_bvmt
+            tien_hang_dong_goc = total_phai_thu - tien_hang_dong_bvmt - tien_thue_dong_bvmt - tien_thue_dong_goc
+            # --- END: LOGIC TÍNH TOÁN "PHÂN BỔ TỪ TỔNG" ---
+            
+            # Điền dữ liệu cho dòng gốc
             summary_row[0], summary_row[1] = ma_kho, f"Khách hàng mua {product} không lấy hóa đơn"
             summary_row[31], summary_row[2] = summary_row[1], final_date
             summary_row[3] = f"{prefix}BK.{final_date.strftime('%d.%m')}.{summary_suffix_map.get(product, '')}"
             summary_row[4] = first_data['mau_so'] + first_data['ky_hieu']
             summary_row[5] = f"Xuất bán hàng theo hóa đơn số {summary_row[3]}"
             summary_row[7], summary_row[6], summary_row[8], summary_row[9] = product, static_data['ma_hang_map'].get(product, ''), "Lít", ma_kho
-            summary_row[12], summary_row[13], summary_row[14], summary_row[17] = round(total_sl, 3), first_data['don_gia'] - phi_bvmt, round(TH_goc), ma_thue
+            summary_row[12] = round(total_so_luong, 3)
+            summary_row[13] = first_data['don_gia'] - phi_bvmt_unit
+            summary_row[17] = ma_thue_str
+            summary_row[14] = tien_hang_dong_goc
+            summary_row[36] = tien_thue_dong_goc
             summary_row[18], summary_row[19], summary_row[20], summary_row[21] = tk_no, tk_doanh_thu, tk_gia_von, tk_thue_co
             summary_row[23] = static_data['vu_viec_map'].get(selected_chxd, {}).get(product, '')
-            summary_row[36] = round(TT_goc)
             original_invoice_rows.append(summary_row)
-            bvmt_rows.append(_create_hddt_bvmt_row(summary_row, phi_bvmt, static_data, khu_vuc))
+            
+            # --- START: TẠO DÒNG BVMT THỦ CÔNG ĐỂ BẢO TOÀN GIÁ TRỊ ---
+            bvmt_summary_row = list(summary_row)
+            bvmt_summary_row[6], bvmt_summary_row[7] = "TMT", "Thuế bảo vệ môi trường"
+            bvmt_summary_row[13] = phi_bvmt_unit
+            bvmt_summary_row[18] = static_data.get('tk_no_bvmt_map', {}).get(khu_vuc)
+            bvmt_summary_row[19] = static_data.get('tk_dt_thue_bvmt_map', {}).get(khu_vuc)
+            bvmt_summary_row[20] = static_data.get('tk_gia_von_bvmt_value')
+            bvmt_summary_row[21] = static_data.get('tk_thue_co_bvmt_map', {}).get(khu_vuc)
+            # Gán chính xác các giá trị đã được phân bổ
+            bvmt_summary_row[14] = tien_hang_dong_bvmt
+            bvmt_summary_row[36] = tien_thue_dong_bvmt
+            # Xóa các trường không cần thiết
+            for i in [5, 31, 32, 33]: bvmt_summary_row[i] = ''
+            bvmt_rows.append(bvmt_summary_row)
+            # --- END: TẠO DÒNG BVMT THỦ CÔNG ---
         
+        # --- Ghi ra file Excel ---
         upsse_wb = _create_upsse_workbook_hddt()
         ws = upsse_wb.active
         for row_data in original_invoice_rows + bvmt_rows:
             ws.append(row_data)
 
-        # Áp dụng định dạng sau khi đã ghi hết dữ liệu
         for row_index in range(6, ws.max_row + 1):
-            # Áp dụng định dạng ngày 'dd/mm/yyyy' cho cột C
             date_cell = ws[f'C{row_index}']
             if isinstance(date_cell.value, datetime):
                 date_cell.number_format = 'dd/mm/yyyy'
-
-            # Áp dụng định dạng text cho cột R (Mã thuế) để giữ số 0 đứng trước
             text_cell = ws[f'R{row_index}']
             text_cell.number_format = '@'
             
@@ -178,6 +220,7 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
         output_buffer.seek(0)
         return output_buffer
 
+    # --- Khối lệnh điều phối chính ---
     static_data, error = _load_static_data_hddt("Data_HDDT.xlsx", "MaHH.xlsx", "DSKH.xlsx")
     if error: raise ValueError(error)
     bkhd_wb = load_workbook(io.BytesIO(file_content_bytes), data_only=True)
