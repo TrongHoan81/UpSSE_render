@@ -88,6 +88,11 @@
                 <button id="tab-doisoat" class="tab-button whitespace-nowrap py-3 px-4 border-b-2 font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300 focus:outline-none">
                     Đối soát Hóa đơn
                 </button>
+                <!-- START: THÊM TAB MỚI "THẺ KHO TỰ ĐỘNG" -->
+                <button id="tab-thekho" class="tab-button whitespace-nowrap py-3 px-4 border-b-2 font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300 focus:outline-none">
+                    Thẻ kho tự động
+                </button>
+                <!-- END: THÊM TAB MỚI "THẺ KHO TỰ ĐỘNG" -->
             </nav>
         </div>
 
@@ -185,7 +190,7 @@
                             <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
                                 <li>Tải lên file log bơm kết xuất từ phần mềm bán hàng (POS).</li>
                                 <li>Tải lên file bảng kê hóa đơn điện tử (tại trang hddt.pvoil.vn) tương ứng.</li>
-                                <li class="font-semibold">Vì dung lượng của công cụ hạn chế, bạn chỉ nên chạy 1 đến 2 ngày trong 1 lần đối soát.</li>
+                                <li class="font-semibold">Vì dung lượng của công cụ hạn chế, bạn chỉ nên chạy dữ liệu hóa đơn của 1 đến 2 ngày trong 1 lần đối soát.</li>
                             </ul>
                         </div>
                     </div>
@@ -342,6 +347,56 @@
                 </div>
                 {% endif %}
             </div>
+
+            <!-- START: TAB MỚI "THẺ KHO TỰ ĐỘNG" -->
+            <div id="content-thekho" class="tab-content hidden">
+                <!-- THAY ĐỔI: Thêm target="_blank" và name cho iframe -->
+                <form id="thekho-form" action="{{ url_for('process_stock_card') }}" method="post" enctype="multipart/form-data" class="space-y-6" target="hidden_iframe_thekho">
+                    <div>
+                        <label for="chxd_thekho" class="block text-lg font-medium text-gray-700 mb-2">1. Chọn Cửa Hàng Xăng Dầu (CHXD):</label>
+                        <!-- ĐÃ THAY ĐỔI: name="chxd_thekho" để khớp với backend -->
+                        <select id="chxd_thekho" name="chxd_thekho" required class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md shadow-sm">
+                            <option value="" disabled selected>-- Vui lòng chọn --</option>
+                            {% for item in chxd_list %}
+                                <option value="{{ item }}">{{ item }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                            <h4 class="text-sm font-semibold text-purple-800 mb-2">Hướng dẫn tạo Thẻ kho tự động:</h4>
+                            <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
+                                <li>Tải lên file ảnh (.jpg, .png) hoặc file PDF chứa biểu mẫu "Phiếu xuất kho kiêm vận chuyển nội bộ".</li>
+                                <li>Bạn có thể tải lên nhiều file cùng lúc.</li>
+                                <li>Hệ thống sẽ trích xuất dữ liệu và tạo file Excel tổng hợp.</li>
+                                <li class="font-semibold text-red-600">Đảm bảo ảnh/PDF rõ nét, không bị mờ hoặc cắt xén thông tin.</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- START: THÊM THÔNG BÁO TÍNH NĂNG ĐANG PHÁT TRIỂN -->
+                    <div class="p-4 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded-lg text-center">
+                        <p class="font-bold text-lg mb-2">Tính năng đang phát triển!</p>
+                        <p>Vui lòng quay lại sau để trải nghiệm chức năng này.</p>
+                    </div>
+                    <!-- END: THÊM THÔNG BÁO TÍNH NĂNG ĐANG PHÁT TRIỂN -->
+
+                    <div>
+                        <label for="file_thekho" class="block text-lg font-medium text-gray-700 mb-2">2. Tải lên file ảnh hoặc PDF:</label>
+                        <div class="flex items-center space-x-2">
+                            <!-- THAY ĐỔI: Thêm disabled để vô hiệu hóa input file -->
+                            <input type="file" name="files[]" id="file_thekho" accept="image/*,application/pdf" multiple required class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100" disabled>
+                            <div id="file-loader-thekho" class="loader hidden"></div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <!-- THAY ĐỔI: Thêm disabled để vô hiệu hóa nút submit -->
+                        <button type="submit" id="submit-thekho" class="w-full flex justify-center py-3 px-4 border rounded-md shadow-sm text-lg font-medium text-white bg-purple-600 hover:bg-purple-700 opacity-50 cursor-not-allowed" disabled>
+                            Xử lý và Tải xuống
+                        </button>
+                    </div>
+                </form>
+            </div>
+            <!-- END: TAB MỚI "THẺ KHO TỰ ĐỘNG" -->
         </div>
         
         <!-- Footer -->
@@ -350,6 +405,12 @@
             <p class="text-xs text-gray-600">Bản quyền thuộc về Nguyễn Trọng Hoàn - 0902069469</p>
         </div>
     </div>
+
+    <!-- START: THÊM IFRAME ẨN VÀ SCRIPT XỬ LÝ LOADER -->
+    <!-- ĐÃ XÓA THUỘC TÍNH onload TRỰC TIẾP TỪ THẺ iframe -->
+    <iframe id="hidden_iframe_thekho" name="hidden_iframe_thekho" style="display:none;"></iframe>
+    <!-- END: THÊM IFRAME ẨN VÀ SCRIPT XỬ LÝ LOADER -->
+
     <script>
         // === SCRIPT QUẢN LÝ TAB ===
         document.addEventListener('DOMContentLoaded', function() {
@@ -359,20 +420,43 @@
             const hasReconciliationData = !!document.getElementById('reconciliation-results');
             const upsseTab = document.getElementById('tab-upsse');
             const doisoatTab = document.getElementById('tab-doisoat');
+            const thekhoTab = document.getElementById('tab-thekho'); // Thêm tab thẻ kho
             const upsseContent = document.getElementById('content-upsse');
             const doisoatContent = document.getElementById('content-doisoat');
+            const thekhoContent = document.getElementById('content-thekho'); // Thêm content thẻ kho
 
+            // Logic mặc định khi tải trang hoặc sau khi đối soát
             if (hasReconciliationData) {
                 upsseTab.classList.remove('active');
                 doisoatTab.classList.add('active');
+                thekhoTab.classList.remove('active'); // Đảm bảo tab thẻ kho không active
                 upsseContent.classList.add('hidden');
                 doisoatContent.classList.remove('hidden');
+                thekhoContent.classList.add('hidden'); // Đảm bảo content thẻ kho ẩn
             } else {
+                // Mặc định tab Đồng bộ SSE active
                 upsseTab.classList.add('active');
                 doisoatTab.classList.remove('active');
+                thekhoTab.classList.remove('active');
                 upsseContent.classList.remove('hidden');
                 doisoatContent.classList.add('hidden');
+                thekhoContent.classList.add('hidden');
             }
+
+            // START: CẬP NHẬT LOGIC KÍCH HOẠT TAB DỰA TRÊN form_data.active_tab
+            const formDataActiveTab = "{{ form_data.active_tab if form_data.active_tab else '' }}";
+            if (formDataActiveTab) {
+                tabs.forEach(t => t.classList.remove('active'));
+                tabContents.forEach(content => content.classList.add('hidden'));
+                const targetTabButton = document.getElementById('tab-' + formDataActiveTab);
+                const targetTabContent = document.getElementById('content-' + formDataActiveTab);
+                if (targetTabButton && targetTabContent) {
+                    targetTabButton.classList.add('active');
+                    targetTabContent.classList.remove('hidden');
+                }
+            }
+            // END: CẬP NHẬT LOGIC KÍCH HOẠT TAB DỰA TRÊN form_data.active_tab
+
 
             tabs.forEach(tab => {
                 tab.addEventListener('click', () => {
@@ -383,81 +467,61 @@
                     document.getElementById(targetContentId).classList.remove('hidden');
                 });
             });
-        });
 
-        // === SCRIPT CHO CHỨC NĂNG CŨ (ĐỒNG BỘ SSE) ===
-        function toggleInvoiceInput() {
-            const isTwoPeriods = document.querySelector('#upsse-form input[name="price_periods"]:checked').value === '2';
-            const invoiceInputContainer = document.getElementById('invoice-input-container');
-            const invoiceInput = document.getElementById('invoice_number');
-            if (isTwoPeriods) {
-                invoiceInputContainer.classList.remove('hidden');
-                invoiceInput.required = true;
-            } else {
-                invoiceInputContainer.classList.add('hidden');
-                invoiceInput.required = false;
-                invoiceInput.value = '';
-            }
-        }
+            // START: SCRIPT CHO CHỨC NĂNG MỚI (THẺ KHO TỰ ĐỘNG)
+            const thekhoForm = document.getElementById('thekho-form');
+            const fileInputTheKho = document.getElementById('file_thekho');
+            const loaderTheKho = document.getElementById('file-loader-thekho');
+            const submitTheKhoButton = document.getElementById('submit-thekho');
+            const hiddenIframeTheKho = document.getElementById('hidden_iframe_thekho'); // Lấy tham chiếu đến iframe
 
-        const fileInputUpsse = document.getElementById('file_upsse');
-        if (fileInputUpsse) {
-            fileInputUpsse.addEventListener('change', function(event) {
-                const file = event.target.files[0];
-                if (!file) return;
-
-                const pricePeriodContainer = document.getElementById('price-period-container');
-                const loader = document.getElementById('file-loader-upsse');
-                
-                loader.classList.remove('hidden');
-                pricePeriodContainer.classList.add('hidden');
-
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    try {
-                        const data = new Uint8Array(e.target.result);
-                        const workbook = XLSX.read(data, {type: 'array'});
-                        const firstSheetName = workbook.SheetNames[0];
-                        const worksheet = workbook.Sheets[firstSheetName];
-                        
-                        let reportType = 'UNKNOWN';
-                        let isHddt = false;
-                        for (let c = 0; c < 26; c++) {
-                            const cellAddress = String.fromCharCode(65 + c) + '9';
-                            const cell = worksheet[cellAddress];
-                            if (cell && cell.v && typeof cell.v === 'string' && cell.v.toLowerCase().includes('số công văn (số tham chiếu)')) {
-                                isHddt = true;
-                                break;
-                            }
-                        }
-
-                        if (isHddt) {
-                            reportType = 'HDDT';
-                        } else {
-                            const cellB4 = worksheet['B4'];
-                            if (cellB4 && cellB4.v && typeof cellB4.v === 'string' && cellB4.v.toLowerCase().includes('seri')) {
-                                reportType = 'POS';
-                            }
-                        }
-
-                        if (reportType === 'HDDT') {
-                            pricePeriodContainer.classList.remove('hidden');
-                        } else {
-                            pricePeriodContainer.classList.add('hidden');
-                            document.querySelector('#upsse-form input[name="price_periods"][value="1"]').checked = true;
-                            toggleInvoiceInput(); 
-                        }
-
-                    } catch (error) {
-                        console.error("Error reading Excel file:", error);
-                        pricePeriodContainer.classList.add('hidden');
-                    } finally {
-                        loader.classList.add('hidden');
+            if (thekhoForm) {
+                thekhoForm.addEventListener('submit', function(event) {
+                    // Ngăn chặn việc gửi form nếu các nút bị disabled (chỉ để đảm bảo)
+                    if (submitTheKhoButton.disabled) {
+                        event.preventDefault();
+                        return;
                     }
-                };
-                reader.readAsArrayBuffer(file);
-            });
-        }
+
+                    console.log('Form submitted. Showing loader...');
+                    // Hiển thị loader và vô hiệu hóa nút submit
+                    loaderTheKho.classList.remove('hidden');
+                    submitTheKhoButton.disabled = true;
+                    submitTheKhoButton.classList.add('opacity-50', 'cursor-not-allowed');
+                    // Reset iframe src để đảm bảo sự kiện onload luôn kích hoạt
+                    hiddenIframeTheKho.src = 'about:blank'; 
+                });
+                
+                // Gắn sự kiện load cho iframe một cách lập trình
+                hiddenIframeTheKho.addEventListener('load', function() {
+                    console.log('Iframe loaded. Hiding loader...');
+                    // Ẩn loader và kích hoạt lại nút submit
+                    if (loaderTheKho) loaderTheKho.classList.add('hidden');
+                    if (submitTheKhoButton) {
+                        // Chỉ kích hoạt lại nút nếu nó không bị disabled cố định
+                        if (!submitTheKhoButton.hasAttribute('data-permanently-disabled')) {
+                            submitTheKhoButton.disabled = false;
+                            submitTheKhoButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                        }
+                    }
+
+                    // Make an AJAX call to clear flash messages
+                    console.log('Calling /clear_flash_messages...');
+                    fetch('/clear_flash_messages')
+                        .then(response => {
+                            if (!response.ok) {
+                                console.error('Failed to clear flash messages:', response.statusText);
+                            } else {
+                                console.log('Flash messages cleared successfully.');
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error clearing flash messages:', error);
+                        });
+                });
+            }
+            // END: SCRIPT CHO CHỨC NĂNG MỚI
+        });
     </script>
 </body>
 </html>

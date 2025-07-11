@@ -2,16 +2,18 @@ import base64
 import io
 import os
 import zipfile
-from flask import Flask, flash, redirect, render_template, request, send_file, url_for
+from flask import Flask, flash, redirect, render_template, request, send_file, url_for, get_flashed_messages # Import get_flashed_messages
 from openpyxl import load_workbook
 
 # --- CÁC IMPORT CHO CÁC HANDLER ---
 # Giả định bạn có file detector.py để nhận diện loại file
 from detector import detect_report_type 
 from hddt_handler import process_hddt_report
-# --- THAY ĐỔI 1: KÍCH HOẠT IMPORT CHO POS HANDLER ---
 from pos_handler import process_pos_report
 from doisoat_handler import perform_reconciliation
+# START: THÊM IMPORT CHO THEKHO_HANDLER MỚI
+from TheKho_handler import process_stock_card_data
+# END: THÊM IMPORT CHO THEKHO_HANDLER MỚI
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'a_very_strong_and_unified_secret_key')
@@ -40,7 +42,9 @@ def get_chxd_list():
 def index():
     """Hiển thị trang upload chính."""
     chxd_list = get_chxd_list()
-    return render_template('index.html', chxd_list=chxd_list, form_data={})
+    # THAY ĐỔI: Lấy active_tab từ query parameter nếu có, để duy trì tab khi redirect
+    active_tab = request.args.get('active_tab', 'upsse') 
+    return render_template('index.html', chxd_list=chxd_list, form_data={"active_tab": active_tab})
 
 @app.route('/process', methods=['POST'])
 def process():
@@ -57,7 +61,7 @@ def process():
     try:
         if not form_data["selected_chxd"]:
             flash('Vui lòng chọn CHXD.', 'warning')
-            return redirect(url_for('index'))
+            return redirect(url_for('index', active_tab='upsse')) # Giữ tab active
 
         file_content = None
         if form_data["encoded_file"]:
@@ -66,14 +70,12 @@ def process():
             file_content = request.files['file'].read()
         else:
             flash('Vui lòng tải lên file Bảng kê.', 'warning')
-            return redirect(url_for('index'))
+            return redirect(url_for('index', active_tab='upsse')) # Giữ tab active
 
         report_type = detect_report_type(file_content)
         result = None
 
-        # --- THAY ĐỔI 2: GỌI HÀM XỬ LÝ POS KHI ĐÚNG LOẠI FILE ---
         if report_type == 'POS':
-            # Gọi hàm xử lý cho file POS
             result = process_pos_report(
                 file_content_bytes=file_content,
                 selected_chxd=form_data["selected_chxd"],
@@ -81,7 +83,6 @@ def process():
                 new_price_invoice_number=form_data["invoice_number"]
             )
         elif report_type == 'HDDT':
-            # Gọi hàm xử lý cho file HDDT (giữ nguyên)
             result = process_hddt_report(
                 file_content_bytes=file_content,
                 selected_chxd=form_data["selected_chxd"],
@@ -91,7 +92,6 @@ def process():
             )
         else:
             raise ValueError("Không thể tự động nhận diện loại Bảng kê. Vui lòng kiểm tra lại file Excel bạn đã tải lên.")
-        # --- KẾT THÚC THAY ĐỔI ---
 
         if isinstance(result, dict) and result.get('choice_needed'):
             form_data["encoded_file"] = base64.b64encode(file_content).decode('utf-8')
@@ -107,10 +107,12 @@ def process():
                     result['new'].seek(0)
                     zipf.writestr('UpSSE_gia_moi.xlsx', result['new'].read())
             zip_buffer.seek(0)
+            flash('Xử lý Đồng bộ SSE thành công!', 'success') # Flash message
             return send_file(zip_buffer, as_attachment=True, download_name='UpSSE_2_giai_doan.zip', mimetype='application/zip')
 
         elif isinstance(result, io.BytesIO):
             result.seek(0)
+            flash('Xử lý Đồng bộ SSE thành công!', 'success') # Flash message
             return send_file(result, as_attachment=True, download_name='UpSSE.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         
         else:
@@ -135,7 +137,7 @@ def reconcile():
 
         if not selected_chxd or not file_log_bom or not file_hddt:
             flash('Vui lòng chọn CHXD và tải lên đủ cả 2 file để đối soát.', 'warning')
-            return redirect(url_for('index'))
+            return redirect(url_for('index', active_tab='doisoat')) # Giữ tab active
 
         log_bom_bytes = file_log_bom.read()
         hddt_bytes = file_hddt.read()
@@ -152,9 +154,69 @@ def reconcile():
     return render_template('index.html', 
                            chxd_list=chxd_list, 
                            reconciliation_data=reconciliation_data,
-                           form_data={})
+                           form_data={"active_tab": "doisoat"}) # Giữ tab active
 
+# START: ROUTE MỚI CHO CHỨC NĂNG THẺ KHO TỰ ĐỘNG
+@app.route('/process_stock_card', methods=['POST'])
+def process_stock_card():
+    """
+    Xử lý file ảnh/PDF tải lên cho chức năng Thẻ kho tự động.
+    Sử dụng Gemini API để trích xuất dữ liệu và tạo file Excel.
+    """
+    chxd_list = get_chxd_list()
+    selected_chxd = request.form.get('chxd_thekho') # Lấy CHXD từ form thẻ kho
+
+    try:
+        if not selected_chxd:
+            flash('Vui lòng chọn Cửa Hàng Xăng Dầu (CHXD) cho chức năng Thẻ kho.', 'warning')
+            # Đảm bảo tab thẻ kho được hiển thị lại nếu có lỗi
+            return render_template('index.html', chxd_list=chxd_list, form_data={"active_tab": "thekho"})
+
+        uploaded_files = request.files.getlist('files[]')
+        if not uploaded_files or all(f.filename == '' for f in uploaded_files):
+            flash('Vui lòng tải lên ít nhất một file ảnh hoặc PDF.', 'warning')
+            # Đảm bảo tab thẻ kho được hiển thị lại nếu có lỗi
+            return render_template('index.html', chxd_list=chxd_list, form_data={"active_tab": "thekho"})
+
+        # Gọi hàm xử lý chính trong TheKho_handler
+        excel_buffer = process_stock_card_data(uploaded_files, selected_chxd)
+        
+        if excel_buffer:
+            excel_buffer.seek(0)
+            flash('Xử lý Thẻ kho tự động thành công!', 'success') # Flash message
+            return send_file(
+                excel_buffer,
+                as_attachment=True,
+                download_name='TheKho_TuDong.xlsx',
+                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+        else:
+            flash('Không có dữ liệu hợp lệ được trích xuất từ các file đã tải lên.', 'warning')
+            # Đảm bảo tab thẻ kho được hiển thị lại nếu có lỗi
+            return render_template('index.html', chxd_list=chxd_list, form_data={"active_tab": "thekho"})
+
+    except ValueError as ve:
+        # Bắt lỗi ValueError chi tiết từ TheKho_handler và hiển thị
+        flash(str(ve).replace('\n', '<br>'), 'danger')
+        # Đảm bảo tab thẻ kho được hiển thị lại nếu có lỗi
+        return render_template('index.html', chxd_list=chxd_list, form_data={"active_tab": "thekho"})
+    except Exception as e:
+        flash(f"Đã xảy ra lỗi không mong muốn trong quá trình xử lý Thẻ kho: {e}", 'danger')
+        # Đảm bảo tab thẻ kho được hiển thị lại nếu có lỗi
+        return render_template('index.html', chxd_list=chxd_list, form_data={"active_tab": "thekho"})
+# END: ROUTE MỚI CHO CHỨC NĂNG THẺ KHO TỰ ĐỘNG
+
+# START: ROUTE MỚI ĐỂ XÓA FLASH MESSAGES
+@app.route('/clear_flash_messages', methods=['GET'])
+def clear_flash_messages():
+    """
+    Route này được gọi bởi JavaScript để xóa các thông báo flash trong session.
+    """
+    _ = get_flashed_messages() # Gọi hàm này để lấy và xóa tất cả messages
+    return '', 204 # Trả về phản hồi rỗng với status code 204 (No Content)
+# END: ROUTE MỚI ĐỂ XÓA FLASH MESSAGES
 
 if __name__ == '__main__':
     # Cần có file detector.py trong cùng thư mục để chạy
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
