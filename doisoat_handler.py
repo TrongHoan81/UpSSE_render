@@ -43,7 +43,8 @@ def _excel_date_to_datetime(excel_date):
 def _parse_hddt_file(hddt_bytes):
     """Phân tích dữ liệu từ file Bảng kê HĐĐT."""
     try:
-        wb = load_workbook(io.BytesIO(hddt_bytes), data_only=True)
+        # Tối ưu hóa: Chỉ đọc dữ liệu, bỏ qua định dạng, VBA, và liên kết
+        wb = load_workbook(io.BytesIO(hddt_bytes), data_only=True, read_only=True, keep_vba=False, keep_links=False)
         ws = wb.active
         
         pos_invoices = []
@@ -81,7 +82,8 @@ def _parse_hddt_file(hddt_bytes):
                     direct_petroleum_invoices.append(invoice_data)
                 else:
                     other_invoices.append(invoice_data)
-
+        
+        wb.close() # Đảm bảo đóng workbook sau khi đọc
         return {
             'pos_invoices': pos_invoices,
             'direct_petroleum_invoices': direct_petroleum_invoices,
@@ -93,7 +95,8 @@ def _parse_hddt_file(hddt_bytes):
 def _parse_log_bom_file(log_bom_bytes):
     """Phân tích dữ liệu từ file Log Bơm (POS)."""
     try:
-        wb = load_workbook(io.BytesIO(log_bom_bytes), data_only=True)
+        # Tối ưu hóa: Chỉ đọc dữ liệu, bỏ qua định dạng, VBA, và liên kết
+        wb = load_workbook(io.BytesIO(log_bom_bytes), data_only=True, read_only=True, keep_vba=False, keep_links=False)
         ws = wb.active
         
         pump_logs = []
@@ -128,6 +131,8 @@ def _parse_log_bom_file(log_bom_bytes):
             
         if not pump_logs:
             raise ValueError("Không tìm thấy giao dịch nào cần xuất hóa đơn trong file Log Bơm.")
+        
+        wb.close() # Đảm bảo đóng workbook sau khi đọc
         return pump_logs
     except Exception as e:
         raise ValueError(f"Lỗi khi đọc file Log Bơm: {e}")
@@ -140,7 +145,8 @@ def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd_name, invoic
     """
     try:
         # --- BƯỚC XÁC THỰC CHXD TỪ FILE LOG BƠM (POS) ---
-        log_wb = load_workbook(io.BytesIO(log_bom_bytes), data_only=True)
+        # Tối ưu hóa: Chỉ đọc dữ liệu, bỏ qua định dạng, VBA, và liên kết
+        log_wb = load_workbook(io.BytesIO(log_bom_bytes), data_only=True, read_only=True, keep_vba=False, keep_links=False)
         log_ws = log_wb.active
         
         # Đọc ô A2 (có thể là merged cell A-B-C-D-E2)
@@ -149,17 +155,23 @@ def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd_name, invoic
             # Loại bỏ "CHXD " và làm sạch chuỗi để so sánh
             pos_chxd_name_extracted = _clean_string(str(pos_chxd_cell_value).replace("CHXD ", ""))
             if pos_chxd_name_extracted.lower() != selected_chxd_name.lower():
+                log_wb.close() # Đóng workbook trước khi raise lỗi
                 raise ValueError("Bảng kê log bơm không phải của cửa hàng bạn chọn.")
         else:
+            log_wb.close() # Đóng workbook trước khi raise lỗi
             raise ValueError("Không tìm thấy thông tin CHXD trong file Log Bơm (ô A2 trống).")
+        
+        log_wb.close() # Đảm bảo đóng workbook sau khi đọc
 
         # --- BƯỚC XÁC THỰC KÝ HIỆU HÓA ĐƠN TỪ FILE HĐĐT ---
-        hddt_wb = load_workbook(io.BytesIO(hddt_bytes), data_only=True)
+        # Tối ưu hóa: Chỉ đọc dữ liệu, bỏ qua định dạng, VBA, và liên kết
+        hddt_wb = load_workbook(io.BytesIO(hddt_bytes), data_only=True, read_only=True, keep_vba=False, keep_links=False)
         hddt_ws = hddt_wb.active
         
         # Lấy 6 ký tự cuối của ký hiệu hóa đơn từ file cấu hình
         # Đảm bảo ký hiệu từ config đủ dài để cắt
         if len(invoice_symbol_from_config) < 6:
+            hddt_wb.close() # Đóng workbook trước khi raise lỗi
             raise ValueError(f"Ký hiệu hóa đơn trong file cấu hình Data_HDDT.xlsx ('{invoice_symbol_from_config}') quá ngắn để xác thực.")
         expected_invoice_symbol_suffix = invoice_symbol_from_config[-6:].upper()
 
@@ -183,17 +195,23 @@ def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd_name, invoic
                 actual_invoice_symbol_hddt = _clean_string(row_values[18])
                 if len(actual_invoice_symbol_hddt) >= 6:
                     if actual_invoice_symbol_hddt[-6:].upper() != expected_invoice_symbol_suffix:
+                        hddt_wb.close() # Đóng workbook trước khi raise lỗi
                         raise ValueError("Bảng kê hddt không phải của cửa hàng bạn chọn.")
                 else:
                     # Dòng hóa đơn hợp lệ nhưng ký hiệu quá ngắn
+                    hddt_wb.close() # Đóng workbook trước khi raise lỗi
                     raise ValueError(f"Ký hiệu hóa đơn tại dòng {row_index} của bảng kê HDDT quá ngắn để xác thực.")
             else:
                 # Dòng hóa đơn hợp lệ nhưng thiếu ký hiệu hóa đơn
+                hddt_wb.close() # Đóng workbook trước khi raise lỗi
                 raise ValueError(f"Hóa đơn tại dòng {row_index} của bảng kê HDDT thiếu ký hiệu hóa đơn (cột S).")
         
         # Sau khi kiểm tra tất cả các dòng, nếu không tìm thấy bất kỳ dòng hóa đơn hợp lệ nào để xác thực ký hiệu.
         if not has_at_least_one_valid_invoice_for_symbol_check:
+            hddt_wb.close() # Đóng workbook trước khi raise lỗi
             raise ValueError("Không tìm thấy hóa đơn hợp lệ nào trong file Bảng kê HDDT để xác thực ký hiệu.")
+        
+        hddt_wb.close() # Đảm bảo đóng workbook sau khi đọc
 
         # Nếu các bước xác thực thành công, tiếp tục xử lý đối soát
         parsed_hddt_data = _parse_hddt_file(hddt_bytes)
@@ -276,5 +294,7 @@ def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd_name, invoic
         return reconciliation_data
 
     except Exception as e:
+        # In ra lỗi chi tiết để debug trên Render logs
         print(f"Lỗi trong quá trình đối soát: {e}")
         raise e
+
