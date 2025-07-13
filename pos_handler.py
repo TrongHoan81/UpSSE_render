@@ -3,8 +3,9 @@ import re
 from datetime import datetime
 from openpyxl import load_workbook, Workbook
 
-# --- CÁC HÀM TIỆN ÍCH (KHÔNG THAY ĐỔI) ---
+# --- CÁC HÀM TIỆN ÍCH ---
 def _pos_to_float(value):
+    """Chuyển đổi giá trị sang float, xử lý các trường hợp lỗi."""
     try:
         if isinstance(value, str):
             value = value.replace(",", "").strip()
@@ -13,11 +14,13 @@ def _pos_to_float(value):
         return 0.0
 
 def _pos_clean_string(s):
+    """Làm sạch chuỗi, loại bỏ khoảng trắng thừa và ký tự '."""
     if s is None:
         return ""
-    return re.sub(r'\s+', ' ', str(s)).strip()
+    return re.sub(r'\s+', ' ', s).strip()
 
 def _convert_to_datetime(date_input):
+    """Chuyển đổi ngày tháng sang đối tượng datetime."""
     if isinstance(date_input, datetime):
         return date_input
     if isinstance(date_input, str):
@@ -28,43 +31,9 @@ def _convert_to_datetime(date_input):
             return date_input
     return date_input
 
-# --- HÀM NẠP DỮ LIỆU TĨNH (KHÔNG THAY ĐỔI) ---
-def _pos_get_static_data(file_path):
-    try:
-        wb = load_workbook(file_path, data_only=True)
-        ws = wb.active
-        chxd_detail_map, store_specific_x_lookup = {}, {}
-        for row_idx in range(3, ws.max_row + 1):
-            row_values = [cell.value for cell in ws[row_idx]]
-            if len(row_values) < 12: continue
-            chxd_name = _pos_clean_string(row_values[3])
-            if chxd_name:
-                chxd_detail_map[chxd_name] = {
-                    'g5_val': row_values[9], 'h5_val': _pos_clean_string(row_values[11]).lower(),
-                    'f5_val_full': _pos_clean_string(row_values[10]), 'b5_val': chxd_name
-                }
-                store_specific_x_lookup[chxd_name] = {
-                    "xăng e5 ron 92-ii": row_values[4], "xăng ron 95-iii": row_values[5],
-                    "dầu do 0,05s-ii": row_values[6], "dầu do 0,001s-v": row_values[7]
-                }
-        def get_lookup(min_r, max_r, min_c=1, max_c=2):
-            return {_pos_clean_string(row[0]).lower(): row[1] for row in ws.iter_rows(min_row=min_r, max_row=max_r, min_col=min_c, max_col=max_c, values_only=True) if row[0] and row[1]}
-        tmt_lookup_table = {k: _pos_to_float(v) for k, v in get_lookup(10, 13).items()}
-        wb.close()
-        return {
-            "lookup_table": get_lookup(4, 7), "tmt_lookup_table": tmt_lookup_table,
-            "s_lookup_table": get_lookup(29, 31), "t_lookup_regular": get_lookup(33, 35),
-            "t_lookup_tmt": get_lookup(48, 50), "v_lookup_table": get_lookup(53, 55),
-            "u_value": ws['B36'].value, "chxd_detail_map": chxd_detail_map,
-            "store_specific_x_lookup": store_specific_x_lookup
-        }
-    except FileNotFoundError:
-        raise ValueError(f"Lỗi nghiêm trọng: Không tìm thấy file cấu hình '{file_path}'.")
-    except Exception as e:
-        raise ValueError(f"Lỗi khi đọc file cấu hình '{file_path}': {e}")
-
 # --- HÀM TẠO DÒNG TMT (CHỈ DÙNG CHO HÓA ĐƠN LẺ) ---
 def _pos_create_tmt_row_for_individual(original_row, tmt_value, details):
+    """Tạo dòng Thuế Bảo vệ Môi trường (TMT) cho hóa đơn riêng lẻ."""
     tmt_row = list(original_row)
     ma_thue_for_calc = _pos_to_float(original_row[17])
     tax_rate_decimal = ma_thue_for_calc / 100.0
@@ -88,6 +57,7 @@ def _pos_create_tmt_row_for_individual(original_row, tmt_value, details):
 
 # --- HÀM XỬ LÝ HÓA ĐƠN LẺ ---
 def _pos_process_single_row(row, details, selected_chxd):
+    """Xử lý một dòng dữ liệu hóa đơn riêng lẻ từ bảng kê POS."""
     upsse_row = [''] * 37
     try:
         ma_kh, ten_kh, ngay_hd_raw, so_ct, so_hd, dia_chi_goc, mst_goc, product_name, so_luong, don_gia_vat, tien_hang_source, tien_thue_source = \
@@ -133,6 +103,7 @@ def _pos_process_single_row(row, details, selected_chxd):
 
 # --- HÀM TẠO DÒNG TỔNG HỢP (LOGIC "TOP-DOWN" ĐỒNG BỘ) ---
 def _pos_add_summary_row(original_source_rows, product_name, details, product_tax, selected_chxd, is_new_price_period=False):
+    """Tạo dòng tổng hợp cho khách vãng lai (người mua không lấy hóa đơn)."""
     # 1. Gom các số tổng từ file POS gốc làm "chân lý"
     total_qty = sum(_pos_to_float(r[10]) for r in original_source_rows)
     total_tien_thue_source = sum(_pos_to_float(r[14]) for r in original_source_rows)
@@ -193,10 +164,11 @@ def _pos_add_summary_row(original_source_rows, product_name, details, product_ta
     return new_row, tien_hang_dong_bvmt, tien_thue_dong_bvmt
 
 # --- HÀM TẠO FILE UPPSSE ---
-def _pos_generate_upsse_rows(source_data_rows, static_data, selected_chxd, is_new_price_period=False):
-    chxd_details = static_data["chxd_detail_map"].get(selected_chxd)
+def _pos_generate_upsse_rows(source_data_rows, static_data_pos, selected_chxd, is_new_price_period=False):
+    """Tạo các dòng dữ liệu cho file UpSSE từ dữ liệu POS."""
+    chxd_details = static_data_pos["chxd_detail_map"].get(selected_chxd)
     if not chxd_details: raise ValueError(f"Không tìm thấy thông tin chi tiết cho CHXD: '{selected_chxd}'")
-    details = {**static_data, **chxd_details}
+    details = {**static_data_pos, **chxd_details}
     final_rows, all_tmt_rows = [], []
     no_invoice_rows = {p: [] for p in ["Xăng E5 RON 92-II", "Xăng RON 95-III", "Dầu DO 0,05S-II", "Dầu DO 0,001S-V"]}
     product_tax_map = {}
@@ -243,8 +215,9 @@ def _pos_generate_upsse_rows(source_data_rows, static_data, selected_chxd, is_ne
     final_rows.extend(all_tmt_rows)
     return final_rows
 
-# --- HÀM TẠO FILE EXCEL (KHÔNG THAY ĐỔI) ---
+# --- HÀM TẠO FILE EXCEL ---
 def _pos_create_excel_buffer(processed_rows):
+    """Tạo một đối tượng BytesIO chứa file Excel từ các dòng dữ liệu đã xử lý."""
     if not processed_rows: return None
     output_wb = Workbook()
     output_ws = output_wb.active
@@ -266,35 +239,79 @@ def _pos_create_excel_buffer(processed_rows):
     output_buffer.seek(0)
     return output_buffer
 
-# --- HÀM ĐIỀU PHỐI CHÍNH (KHÔNG THAY ĐỔI) ---
-def process_pos_report(file_content_bytes, selected_chxd, price_periods, new_price_invoice_number, **kwargs):
-    static_data = _pos_get_static_data("Data_HDDT.xlsx")
+# --- HÀM ĐIỀU PHỐI CHÍNH ---
+def process_pos_report(file_content_bytes, selected_chxd, price_periods, new_price_invoice_number, static_data_pos, selected_chxd_symbol, **kwargs):
+    """
+    Xử lý bảng kê POS để tạo file UpSSE.
+    Bao gồm xác thực CHXD dựa trên ký hiệu hóa đơn trong bảng kê POS và mã cửa hàng ở ô B5.
+    """
     try:
+        # static_data_pos đã được truyền từ app.py, không cần gọi _pos_get_static_data
+        if static_data_pos is None:
+            raise ValueError("Dữ liệu cấu hình tĩnh cho POS chưa được tải. Vui lòng kiểm tra cấu hình ứng dụng.")
+
         bkhd_wb = load_workbook(io.BytesIO(file_content_bytes), data_only=True)
         bkhd_ws = bkhd_wb.active
-        chxd_details = static_data["chxd_detail_map"].get(selected_chxd)
-        if not chxd_details: raise ValueError(f"Không tìm thấy thông tin cho CHXD: '{selected_chxd}'")
+        
+        # --- BƯỚC XÁC THỰC CHXD TỪ FILE BẢNG KÊ POS (CỘT B, DÒNG 5 TRỞ ĐI) ---
+        if selected_chxd_symbol is None:
+            raise ValueError("Ký hiệu hóa đơn của CHXD chưa được cung cấp để xác thực.")
+
+        # Lấy 6 ký tự cuối của ký hiệu hóa đơn từ file cấu hình Data_HDDT.xlsx
+        if len(selected_chxd_symbol) < 6:
+            raise ValueError(f"Ký hiệu hóa đơn trong file cấu hình Data_HDDT.xlsx ('{selected_chxd_symbol}') quá ngắn để xác thực.")
+        expected_invoice_symbol_suffix = selected_chxd_symbol[-6:].upper()
+        
+        # Duyệt qua cột B (index 1) từ dòng 5 để kiểm tra ký hiệu hóa đơn
+        # Kiểm tra ít nhất 10 dòng đầu tiên có dữ liệu để xác định tính hợp lệ
+        found_matching_symbol_in_pos_file = False
+        # Giới hạn số dòng kiểm tra để tránh đọc toàn bộ file lớn không cần thiết
+        max_rows_to_check = min(bkhd_ws.max_row, 100) # Check up to 100 rows or end of sheet
+        for row_index, row_values in enumerate(bkhd_ws.iter_rows(min_row=5, max_row=max_rows_to_check, values_only=True), start=5):
+            if len(row_values) > 1 and row_values[1] is not None: # Column B is index 1
+                actual_invoice_symbol_pos = _pos_clean_string(row_values[1])
+                if len(actual_invoice_symbol_pos) >= 6:
+                    if actual_invoice_symbol_pos[-6:].upper() == expected_invoice_symbol_suffix:
+                        found_matching_symbol_in_pos_file = True
+                        break # Found a matching symbol, no need to check further
+        
+        if not found_matching_symbol_in_pos_file:
+            # ĐÃ THAY ĐỔI: Bỏ phần ký hiệu mong muốn
+            raise ValueError(f"Bảng kê POS không phải của cửa hàng bạn chọn hoặc không tìm thấy ký hiệu hóa đơn hợp lệ.")
+
+        # --- KIỂM TRA MÃ CỬA HÀNG Ở Ô B5 (GIỮ NGUYÊN) ---
+        chxd_details = static_data_pos["chxd_detail_map"].get(selected_chxd)
+        if not chxd_details: 
+            # Trường hợp này khó xảy ra nếu selected_chxd được lấy từ get_chxd_list()
+            raise ValueError(f"Không tìm thấy thông tin chi tiết cho CHXD: '{selected_chxd}'. Vui lòng kiểm tra file cấu hình Data_HDDT.xlsx.")
+        
         b5_bkhd = _pos_clean_string(str(bkhd_ws['B5'].value))
-        f5_norm = _pos_clean_string(chxd_details['f5_val_full'])
+        f5_norm = _pos_clean_string(chxd_details['f5_val_full']) # Full symbol from Data_HDDT.xlsx (Column K)
+        
+        # So sánh 6 ký tự cuối của ký hiệu từ Data_HDDT.xlsx với giá trị ô B5 của bảng kê POS
         if f5_norm and len(f5_norm) >= 6 and f5_norm[-6:] != b5_bkhd:
-            raise ValueError(f"Lỗi dữ liệu: Mã cửa hàng không khớp.\n- Mã trong Bảng kê (ô B5): '{b5_bkhd}'\n- Mã trong file cấu hình (6 ký tự cuối cột K): '{f5_norm[-6:]}'")
-        all_source_rows = list(bkhd_ws.iter_rows(min_row=5, values_only=True))
+            raise ValueError(f"Lỗi dữ liệu: Mã cửa hàng không khớp.\n- Mã trong Bảng kê POS (ô B5): '{b5_bkhd}'\n- Mã trong file cấu hình (6 ký tự cuối cột K): '{f5_norm[-6:]}'")
+        
+        # --- Tiếp tục với logic hiện có ---
+        all_source_rows = list(bkhd_ws.iter_rows(min_row=5, values_only=True)) # Bắt đầu đọc dữ liệu từ dòng 5
         if price_periods == '1':
-            processed_rows = _pos_generate_upsse_rows(all_source_rows, static_data, selected_chxd, is_new_price_period=False)
+            processed_rows = _pos_generate_upsse_rows(all_source_rows, static_data_pos, selected_chxd, is_new_price_period=False)
             if not processed_rows: raise ValueError("Không có dữ liệu hợp lệ để xử lý trong file POS tải lên.")
             return _pos_create_excel_buffer(processed_rows)
         else:
             if not new_price_invoice_number: raise ValueError("Vui lòng nhập 'Số hóa đơn đầu tiên của giá mới' khi chọn 2 giai đoạn giá.")
             split_index = -1
             for i, row in enumerate(all_source_rows):
+                # Kiểm tra cột C (index 2) cho số hóa đơn
                 if len(row) > 2 and row[2] is not None and _pos_clean_string(str(row[2])) == new_price_invoice_number:
                     split_index = i
                     break
             if split_index == -1: raise ValueError(f"Không tìm thấy số hóa đơn '{new_price_invoice_number}' để chia giai đoạn giá.")
             old_price_rows, new_price_rows = all_source_rows[:split_index], all_source_rows[split_index:]
-            buffer_new = _pos_create_excel_buffer(_pos_generate_upsse_rows(new_price_rows, static_data, selected_chxd, is_new_price_period=True))
-            buffer_old = _pos_create_excel_buffer(_pos_generate_upsse_rows(old_price_rows, static_data, selected_chxd, is_new_price_period=False))
+            buffer_new = _pos_create_excel_buffer(_pos_generate_upsse_rows(new_price_rows, static_data_pos, selected_chxd, is_new_price_period=True))
+            buffer_old = _pos_create_excel_buffer(_pos_generate_upsse_rows(old_price_rows, static_data_pos, selected_chxd, is_new_price_period=False))
             if not buffer_new and not buffer_old: raise ValueError("Không có dữ liệu hợp lệ để xử lý trong file POS tải lên.")
             return {'new': buffer_new, 'old': buffer_old}
     except Exception as e:
         raise e
+

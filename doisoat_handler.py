@@ -7,24 +7,28 @@ from openpyxl import load_workbook
 
 # --- CÁC HÀM TIỆN ÍCH ---
 def _clean_string(s):
+    """Làm sạch chuỗi, loại bỏ khoảng trắng thừa và ký tự '."""
     if s is None: return ""
     cleaned_s = str(s).strip()
     if cleaned_s.startswith("'"): cleaned_s = cleaned_s[1:]
     return re.sub(r'\s+', ' ', cleaned_s)
 
 def _to_float(value):
+    """Chuyển đổi giá trị sang float, xử lý các trường hợp lỗi."""
     if value is None: return 0.0
     try:
         return float(str(value).replace(',', '').strip())
     except (ValueError, TypeError): return 0.0
 
 def _format_number(num):
+    """Định dạng số thành chuỗi có dấu phẩy phân cách hàng nghìn và 2 chữ số thập phân."""
     try:
         return f"{num:,.2f}"
     except (ValueError, TypeError):
         return "0.00"
 
 def _excel_date_to_datetime(excel_date):
+    """Chuyển đổi ngày tháng từ định dạng Excel sang đối tượng datetime."""
     if isinstance(excel_date, (int, float)):
         try:
             return pd.to_datetime(excel_date, unit='D', origin='1899-12-30').to_pydatetime()
@@ -37,6 +41,7 @@ def _excel_date_to_datetime(excel_date):
 # --- CÁC HÀM PHÂN TÍCH FILE ---
 
 def _parse_hddt_file(hddt_bytes):
+    """Phân tích dữ liệu từ file Bảng kê HĐĐT."""
     try:
         wb = load_workbook(io.BytesIO(hddt_bytes), data_only=True)
         ws = wb.active
@@ -53,7 +58,7 @@ def _parse_hddt_file(hddt_bytes):
         for row_index, row_values in enumerate(ws.iter_rows(min_row=11, values_only=True), start=11):
             quantity = _to_float(row_values[8] if len(row_values) > 8 else None)
             if quantity <= 0:
-                continue
+                continue # Bỏ qua các dòng không có số lượng hoặc số lượng <= 0 (bao gồm dòng tổng)
 
             fkey = _clean_string(row_values[24] if len(row_values) > 24 else None)
             item_name = _clean_string(row_values[6] if len(row_values) > 6 else None)
@@ -65,6 +70,7 @@ def _parse_hddt_file(hddt_bytes):
                 'total_amount': _to_float(row_values[16] if len(row_values) > 16 else None),
                 'invoice_number': _clean_string(row_values[19] if len(row_values) > 19 else None),
                 'invoice_date_raw': row_values[20] if len(row_values) > 20 else None,
+                'invoice_symbol_hddt': _clean_string(row_values[18] if len(row_values) > 18 else None), # Lấy ký hiệu hóa đơn từ cột S (index 18)
                 'source_row': row_index
             }
 
@@ -85,12 +91,12 @@ def _parse_hddt_file(hddt_bytes):
         raise ValueError(f"Lỗi khi đọc file Bảng kê HĐĐT: {e}")
 
 def _parse_log_bom_file(log_bom_bytes):
+    """Phân tích dữ liệu từ file Log Bơm (POS)."""
     try:
         wb = load_workbook(io.BytesIO(log_bom_bytes), data_only=True)
         ws = wb.active
         
         pump_logs = []
-        # *** THAY ĐỔI Ở ĐÂY ***
         # Các loại giao dịch cần xuất hóa đơn
         VALID_TRANSACTION_TYPES = ['bán lẻ', 'hợp đồng', 'khuyến mãi', 'trả trước']
         
@@ -127,8 +133,69 @@ def _parse_log_bom_file(log_bom_bytes):
         raise ValueError(f"Lỗi khi đọc file Log Bơm: {e}")
 
 
-def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd):
+def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd_name, invoice_symbol_from_config):
+    """
+    Thực hiện đối soát dữ liệu giữa file Log Bơm (POS) và file Bảng kê HĐĐT.
+    Bổ sung bước xác thực CHXD và ký hiệu hóa đơn.
+    """
     try:
+        # --- BƯỚC XÁC THỰC CHXD TỪ FILE LOG BƠM (POS) ---
+        log_wb = load_workbook(io.BytesIO(log_bom_bytes), data_only=True)
+        log_ws = log_wb.active
+        
+        # Đọc ô A2 (có thể là merged cell A-B-C-D-E2)
+        pos_chxd_cell_value = log_ws['A2'].value
+        if pos_chxd_cell_value:
+            # Loại bỏ "CHXD " và làm sạch chuỗi để so sánh
+            pos_chxd_name_extracted = _clean_string(str(pos_chxd_cell_value).replace("CHXD ", ""))
+            if pos_chxd_name_extracted.lower() != selected_chxd_name.lower():
+                raise ValueError("Bảng kê log bơm không phải của cửa hàng bạn chọn.")
+        else:
+            raise ValueError("Không tìm thấy thông tin CHXD trong file Log Bơm (ô A2 trống).")
+
+        # --- BƯỚC XÁC THỰC KÝ HIỆU HÓA ĐƠN TỪ FILE HĐĐT ---
+        hddt_wb = load_workbook(io.BytesIO(hddt_bytes), data_only=True)
+        hddt_ws = hddt_wb.active
+        
+        # Lấy 6 ký tự cuối của ký hiệu hóa đơn từ file cấu hình
+        # Đảm bảo ký hiệu từ config đủ dài để cắt
+        if len(invoice_symbol_from_config) < 6:
+            raise ValueError(f"Ký hiệu hóa đơn trong file cấu hình Data_HDDT.xlsx ('{invoice_symbol_from_config}') quá ngắn để xác thực.")
+        expected_invoice_symbol_suffix = invoice_symbol_from_config[-6:].upper()
+
+        has_at_least_one_valid_invoice_for_symbol_check = False
+
+        # Duyệt qua cột S (index 18) từ dòng 11 để kiểm tra ký hiệu hóa đơn
+        for row_index, row_values in enumerate(hddt_ws.iter_rows(min_row=11, values_only=True), start=11):
+            # Kiểm tra xem dòng này có phải là một hóa đơn thực tế (có số lượng > 0) không
+            # Cột I (index 8) là số lượng
+            quantity_val = _to_float(row_values[8] if len(row_values) > 8 else None)
+            
+            # Nếu số lượng <= 0, đây có thể là dòng tiêu đề, chân trang, hoặc dòng tổng cộng. Bỏ qua xác thực ký hiệu cho các dòng này.
+            if quantity_val <= 0:
+                continue
+
+            # Nếu đến đây, đây là một dòng hóa đơn hợp lệ (có số lượng > 0)
+            has_at_least_one_valid_invoice_for_symbol_check = True
+
+            # Thực hiện xác thực ký hiệu hóa đơn
+            if len(row_values) > 18 and row_values[18] is not None: # Cột S (index 18)
+                actual_invoice_symbol_hddt = _clean_string(row_values[18])
+                if len(actual_invoice_symbol_hddt) >= 6:
+                    if actual_invoice_symbol_hddt[-6:].upper() != expected_invoice_symbol_suffix:
+                        raise ValueError("Bảng kê hddt không phải của cửa hàng bạn chọn.")
+                else:
+                    # Dòng hóa đơn hợp lệ nhưng ký hiệu quá ngắn
+                    raise ValueError(f"Ký hiệu hóa đơn tại dòng {row_index} của bảng kê HDDT quá ngắn để xác thực.")
+            else:
+                # Dòng hóa đơn hợp lệ nhưng thiếu ký hiệu hóa đơn
+                raise ValueError(f"Hóa đơn tại dòng {row_index} của bảng kê HDDT thiếu ký hiệu hóa đơn (cột S).")
+        
+        # Sau khi kiểm tra tất cả các dòng, nếu không tìm thấy bất kỳ dòng hóa đơn hợp lệ nào để xác thực ký hiệu.
+        if not has_at_least_one_valid_invoice_for_symbol_check:
+            raise ValueError("Không tìm thấy hóa đơn hợp lệ nào trong file Bảng kê HDDT để xác thực ký hiệu.")
+
+        # Nếu các bước xác thực thành công, tiếp tục xử lý đối soát
         parsed_hddt_data = _parse_hddt_file(hddt_bytes)
         hddt_invoices = parsed_hddt_data['pos_invoices']
         log_bom_data = _parse_log_bom_file(log_bom_bytes)

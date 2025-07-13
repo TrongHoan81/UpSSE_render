@@ -126,7 +126,7 @@
                         <select id="chxd_upsse" name="chxd" required class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
                             <option value="" disabled {% if not form_data.selected_chxd %}selected{% endif %}>-- Vui lòng chọn --</option>
                             {% for item in chxd_list %}
-                                <option value="{{ item }}" {% if item == form_data.selected_chxd %}selected{% endif %}>{{ item }}</option>
+                                <option value="{{ item.name }}" {% if item.name == form_data.selected_chxd %}selected{% endif %}>{{ item.name }}</option>
                             {% endfor %}
                         </select>
                         <div class="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -151,7 +151,7 @@
                     {% endif %}
                     
                     <div id="price-period-container" class="hidden space-y-4">
-                        <label class="block text-lg font-medium text-gray-700">3. Chọn giai đoạn giá (chỉ dành cho Bảng kê HĐĐT):</label>
+                        <label class="block text-lg font-medium text-gray-700">Chọn giai đoạn giá:</label>
                         <div class="flex items-center space-x-6">
                             <label class="flex items-center"><input type="radio" name="price_periods" value="1" class="h-4 w-4 text-indigo-600" checked onchange="toggleInvoiceInput()"><span class="ml-2">1 Giai đoạn giá</span></label>
                             <label class="flex items-center"><input type="radio" name="price_periods" value="2" class="h-4 w-4 text-indigo-600" onchange="toggleInvoiceInput()"><span class="ml-2">2 Giai đoạn giá</span></label>
@@ -182,7 +182,7 @@
                         <select id="chxd_doisoat" name="chxd" required class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm rounded-md shadow-sm">
                             <option value="" disabled selected>-- Vui lòng chọn --</option>
                             {% for item in chxd_list %}
-                                <option value="{{ item }}">{{ item }}</option>
+                                <option value="{{ item.name }}">{{ item.name }}</option>
                             {% endfor %}
                         </select>
                         <div class="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
@@ -358,14 +358,14 @@
                         <select id="chxd_thekho" name="chxd_thekho" required class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm rounded-md shadow-sm">
                             <option value="" disabled selected>-- Vui lòng chọn --</option>
                             {% for item in chxd_list %}
-                                <option value="{{ item }}">{{ item }}</option>
+                                <option value="{{ item.name }}">{{ item.name }}</option>
                             {% endfor %}
                         </select>
                         <div class="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
                             <h4 class="text-sm font-semibold text-purple-800 mb-2">Hướng dẫn tạo Thẻ kho tự động:</h4>
                             <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
                                 <li>Tải lên file ảnh (.jpg, .png) hoặc file PDF chứa biểu mẫu "Phiếu xuất kho kiêm vận chuyển nội bộ".</li>
-                                <li>Bạn có thể tải lên nhiều file cùng lúc.</li>
+                                <li>Bạn có thể tải lên nhiều file cùng cùng lúc.</li>
                                 <li>Hệ thống sẽ trích xuất dữ liệu và tạo file Excel tổng hợp.</li>
                                 <li class="font-semibold text-red-600">Đảm bảo ảnh/PDF rõ nét, không bị mờ hoặc cắt xén thông tin.</li>
                             </ul>
@@ -468,7 +468,7 @@
                 });
             });
 
-            // START: SCRIPT CHO CHỨC NĂNG MỚI (THẺ KHO TỰ ĐỘNG)
+            // START: SCRIPT CHO CHỨC NĂNG MỚI (THẺ KHO TỰ ĐỘNG) - Keep existing
             const thekhoForm = document.getElementById('thekho-form');
             const fileInputTheKho = document.getElementById('file_thekho');
             const loaderTheKho = document.getElementById('file-loader-thekho');
@@ -499,7 +499,7 @@
                     if (loaderTheKho) loaderTheKho.classList.add('hidden');
                     if (submitTheKhoButton) {
                         // Chỉ kích hoạt lại nút nếu nó không bị disabled cố định
-                        if (!submitTheKhoButton.hasAttribute('data-permanently-disabled')) {
+                        if (!submitThekhoButton.hasAttribute('data-permanently-disabled')) {
                             submitTheKhoButton.disabled = false;
                             submitTheKhoButton.classList.remove('opacity-50', 'cursor-not-allowed');
                         }
@@ -521,6 +521,156 @@
                 });
             }
             // END: SCRIPT CHO CHỨC NĂNG MỚI
+
+            // NEW SCRIPT FOR DYNAMIC PRICE PERIOD DISPLAY
+            const fileUpsseInput = document.getElementById('file_upsse');
+            const pricePeriodContainer = document.getElementById('price-period-container');
+            const pricePeriodRadios = document.querySelectorAll('input[name="price_periods"]');
+            const invoiceNumberInputContainer = document.getElementById('invoice-input-container');
+            const invoiceNumberInput = document.getElementById('invoice_number');
+
+            // Get initial form data from Flask context
+            const initialPricePeriods = "{{ form_data.price_periods if form_data.price_periods else '1' }}";
+            const initialInvoiceNumber = "{{ form_data.invoice_number if form_data.invoice_number else '' }}";
+            const isDateAmbiguous = {{ date_ambiguous | tojson }}; // Convert Python boolean to JS boolean
+
+            console.log("DEBUG: isDateAmbiguous =", isDateAmbiguous);
+            console.log("DEBUG: initialPricePeriods =", initialPricePeriods);
+            console.log("DEBUG: initialInvoiceNumber =", initialInvoiceNumber);
+
+
+            // Hàm phát hiện loại báo cáo Excel ở phía client
+            function detectExcelReportType(arrayBuffer) {
+                try {
+                    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[sheetName];
+
+                    // Kiểm tra cho file POS (ô B4 chứa "Seri")
+                    const b4Cell = worksheet['B4'];
+                    if (b4Cell && b4Cell.v && String(b4Cell.v).toLowerCase().includes('seri')) {
+                        return 'POS';
+                    }
+
+                    // Kiểm tra cho file HDDT (dòng 9 chứa "số công văn (số tham chiếu)")
+                    // Duyệt qua các ô trong dòng 9 (row index 8 trong 0-indexed)
+                    for (let i = 1; i <= 20; i++) { // Kiểm tra 20 cột đầu tiên của dòng 9
+                        const cellAddress = XLSX.utils.encode_cell({ r: 8, c: i - 1 }); 
+                        const cell = worksheet[cellAddress];
+                        if (cell && cell.v && String(cell.v).toLowerCase().includes('số công văn (số tham chiếu)')) {
+                            return 'HDDT';
+                        }
+                    }
+
+                } catch (e) {
+                    console.error("Lỗi khi đọc file Excel:", e);
+                    return 'UNKNOWN';
+                }
+                return 'UNKNOWN';
+            }
+
+            // Hàm để ẩn/hiện input số hóa đơn dựa trên lựa chọn giai đoạn giá
+            window.toggleInvoiceInput = function() {
+                if (document.querySelector('input[name="price_periods"]:checked').value === '2') {
+                    invoiceNumberInputContainer.classList.remove('hidden');
+                    invoiceNumberInput.setAttribute('required', 'required');
+                } else {
+                    invoiceNumberInputContainer.classList.add('hidden');
+                    invoiceNumberInput.removeAttribute('required');
+                    invoiceNumberInput.value = ''; // Xóa nội dung input khi ẩn
+                }
+            };
+
+            // --- Logic thiết lập trạng thái ban đầu khi tải trang ---
+            if (isDateAmbiguous) {
+                // Khi cần xác nhận ngày tháng, phần lựa chọn giai đoạn giá sẽ được ẩn
+                // nhưng các giá trị đã chọn sẽ được giữ lại trong các hidden input của form xác nhận ngày tháng.
+                pricePeriodContainer.classList.add('hidden'); // Ensure it's hidden
+                // No need to set radio buttons or invoice input here, as they are handled by hidden inputs.
+                // The hidden inputs are already in the date-confirmation-container:
+                // <input type="hidden" name="price_periods" value="{{ form_data.price_periods }}">
+                // <input type="hidden" name="invoice_number" value="{{ form_data.invoice_number }}">
+            } else if (fileUpsseInput) {
+                // Nếu không cần xác nhận ngày tháng, thiết lập listener cho input file
+                fileUpsseInput.addEventListener('change', function(event) {
+                    const file = event.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            const arrayBuffer = e.target.result;
+                            const reportType = detectExcelReportType(arrayBuffer);
+                            console.log("Loại báo cáo được phát hiện:", reportType);
+
+                            if (reportType === 'HDDT') {
+                                pricePeriodContainer.classList.remove('hidden');
+                            } else {
+                                pricePeriodContainer.classList.add('hidden');
+                                // Reset các nút radio và input số hóa đơn nếu ẩn đi
+                                pricePeriodRadios[0].checked = true; // Chọn '1 Giai đoạn giá'
+                                toggleInvoiceInput(); // Ẩn input số hóa đơn
+                            }
+                        };
+                        reader.readAsArrayBuffer(file);
+                    } else {
+                        // Nếu không có file nào được chọn, ẩn vùng lựa chọn giai đoạn giá
+                        pricePeriodContainer.classList.add('hidden');
+                        pricePeriodRadios[0].checked = true;
+                        toggleInvoiceInput();
+                    }
+                });
+
+                // Kiểm tra nếu có file đã mã hóa trên lần tải trang đầu tiên (ví dụ: sau lỗi không liên quan đến ngày tháng)
+                const encodedFileContent = document.querySelector('input[name="file_content_b64"]');
+                if (encodedFileContent && encodedFileContent.value) {
+                    let base64String = encodedFileContent.value;
+                    base64String = base64String.replace(/\s/g, ''); 
+                    while (base64String.length % 4 !== 0) {
+                        base64String += '=';
+                    }
+
+                    let arrayBuffer;
+                    try {
+                        const binaryString = atob(base64String);
+                        const len = binaryString.length;
+                        const bytes = new Uint8Array(len);
+                        for (let i = 0; i < len; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
+                        }
+                        arrayBuffer = bytes.buffer;
+                    } catch (e) {
+                        console.error("Lỗi giải mã base64 (InvalidCharacterError):", e);
+                    }
+
+                    if (arrayBuffer) {
+                        const reportType = detectExcelReportType(arrayBuffer);
+                        if (reportType === 'HDDT') {
+                            pricePeriodContainer.classList.remove('hidden');
+                        } else {
+                            pricePeriodContainer.classList.add('hidden');
+                        }
+                        // Đặt lại radio button dựa trên dữ liệu form_data nếu có
+                        if (initialPricePeriods === '2') {
+                            document.querySelector('input[name="price_periods"][value="2"]').checked = true;
+                        } else {
+                            document.querySelector('input[name="price_periods"][value="1"]').checked = true;
+                        }
+                        toggleInvoiceInput(); // Cập nhật hiển thị input số hóa đơn
+                    } else {
+                        pricePeriodContainer.classList.add('hidden');
+                        pricePeriodRadios[0].checked = true;
+                        toggleInvoiceInput();
+                    }
+                } else {
+                    // Nếu không có file input hoặc không có file đã mã hóa, đảm bảo container ẩn
+                    pricePeriodContainer.classList.add('hidden');
+                    pricePeriodRadios[0].checked = true;
+                    toggleInvoiceInput();
+                }
+            } else { // This else block handles the initial load when there's no file input (e.g., date_ambiguous=True initially)
+                pricePeriodContainer.classList.add('hidden');
+                pricePeriodRadios[0].checked = true;
+                toggleInvoiceInput();
+            }
         });
     </script>
 </body>
