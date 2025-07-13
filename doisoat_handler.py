@@ -3,7 +3,15 @@ import re
 from collections import defaultdict
 from datetime import datetime
 import pandas as pd
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook 
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment # Import thêm các style
+# openpyxl.drawing.image và openpyxl.utils.cell không còn cần thiết
+# from openpyxl.drawing.image import Image as OpenpyxlImage 
+# from openpyxl.utils.cell import coordinate_to_tuple 
+
+# xlsxwriter không còn sử dụng cho hàm này
+# import xlsxwriter 
 
 # --- CÁC HÀM TIỆN ÍCH ---
 def _clean_string(s):
@@ -21,24 +29,84 @@ def _to_float(value):
     except (ValueError, TypeError): return 0.0
 
 def _format_number(num):
-    """Định dạng số thành chuỗi có dấu phẩy phân cách hàng nghìn và 2 chữ số thập phân."""
+    """Định dạng số thành chuỗi có dấu phẩy phân cách hàng nghìn và 2 chữ số thập phân.
+    Lưu ý: Hàm này chỉ dùng cho các trường hợp không dùng filter Jinja2.
+    """
     try:
         return f"{num:,.2f}"
     except (ValueError, TypeError):
         return "0.00"
 
 def _excel_date_to_datetime(excel_date):
-    """Chuyển đổi ngày tháng từ định dạng Excel sang đối tượng datetime."""
+    """Chuyển đổi ngày tháng từ định dạng Excel sang đối tượng datetime.
+    Hỗ trợ các định dạng số Excel, datetime object, và chuỗi 'dd/mm/yyyy hh:mm:ss', 'dd/mm/yyyy', 'yyyy-mm-dd'.
+    """
     if isinstance(excel_date, (int, float)):
         try:
+            # openpyxl's data_only=True might convert dates to numbers,
+            # pandas can convert Excel numbers to datetime objects
             return pd.to_datetime(excel_date, unit='D', origin='1899-12-30').to_pydatetime()
         except Exception:
             return None
     elif isinstance(excel_date, datetime):
         return excel_date
+    elif isinstance(excel_date, str):
+        try:
+            return datetime.strptime(excel_date, '%d/%m/%Y %H:%M:%S') # Thử định dạng dd/mm/yyyy hh:mm:ss
+        except ValueError:
+            try:
+                return datetime.strptime(excel_date, '%d/%m/%Y') # Thử định dạng dd/mm/yyyy
+            except ValueError:
+                try:
+                    return datetime.strptime(excel_date, '%Y-%m-%d') # Thử định dạng yyyy-mm-dd
+                except ValueError:
+                    return None
     return None
 
 # --- CÁC HÀM PHÂN TÍCH FILE ---
+
+def _load_discount_data(discount_file_bytes):
+    """
+    Tải và phân tích dữ liệu chiết khấu từ file Excel 'ChietKhau.xlsx'.
+    Trả về một dictionary lồng nhau: {mst_khach_hang: {ten_mat_hang: so_tien_chiet_khau_tren_don_vi}}
+    """
+    discount_map = defaultdict(dict)
+    try:
+        wb = load_workbook(io.BytesIO(discount_file_bytes), data_only=True, read_only=True, keep_vba=False, keep_links=False)
+        ws = wb.active
+        
+        # Đọc tên các mặt hàng từ dòng 2, cột D đến G (index 3 đến 6)
+        # Ví dụ: Xăng E5 RON 92-II, Xăng RON 95-III, Dầu DO 0.05S-II, Dầu DO 0.001S-V
+        product_headers = [_clean_string(cell.value) for cell in ws[2][3:7]]
+        
+        # Dữ liệu chiết khấu bắt đầu từ dòng 3
+        for row_index, row_values in enumerate(ws.iter_rows(min_row=3, values_only=True), start=3):
+            # Đảm bảo có đủ cột cho MST (cột C - index 2) và ít nhất 1 mặt hàng chiết khấu
+            if len(row_values) >= 7: # Cột G là index 6, nên cần ít nhất 7 cột (0-6)
+                mst_khach_hang = _clean_string(row_values[2]) # Cột C: MST
+                
+                if mst_khach_hang:
+                    # Duyệt qua các cột mặt hàng từ D đến G
+                    for i, product_name in enumerate(product_headers):
+                        # row_values[3 + i] tương ứng với cột D, E, F, G
+                        discount_amount_raw = row_values[3 + i] 
+                        
+                        if product_name and discount_amount_raw is not None:
+                            try:
+                                # Mức chiết khấu là số tiền cố định trên mỗi đơn vị
+                                discount_amount_per_unit = _to_float(discount_amount_raw)
+                                discount_map[mst_khach_hang][product_name] = discount_amount_per_unit
+                            except Exception as e:
+                                print(f"Cảnh báo: Bỏ qua giá trị chiết khấu lỗi tại dòng {row_index}, cột {chr(68+i)}: {e} - Dữ liệu: '{discount_amount_raw}'")
+        wb.close()
+    except FileNotFoundError:
+        print("Cảnh báo: Không tìm thấy file 'ChietKhau.xlsx'. Chức năng chiết khấu sẽ không hoạt động.")
+        return defaultdict(dict) # Trả về map rỗng nếu file không tồn tại
+    except Exception as e:
+        print(f"Lỗi khi tải file chiết khấu 'ChietKhau.xlsx': {e}")
+        # Trả về map rỗng nếu có lỗi để chương trình vẫn chạy
+        return defaultdict(dict) 
+    return discount_map
 
 def _parse_hddt_file(hddt_bytes):
     """Phân tích dữ liệu từ file Bảng kê HĐĐT."""
@@ -64,6 +132,11 @@ def _parse_hddt_file(hddt_bytes):
             fkey = _clean_string(row_values[24] if len(row_values) > 24 else None)
             item_name = _clean_string(row_values[6] if len(row_values) > 6 else None)
             
+            # Bổ sung trích xuất Mã số Thuế (cột F - index 5) và Đơn giá (cột J - index 9)
+            mst_khach_hang = _clean_string(row_values[5] if len(row_values) > 5 else None)
+            unit_price = _to_float(row_values[9] if len(row_values) > 9 else None)
+            customer_name = _clean_string(row_values[3] if len(row_values) > 3 else None) # Cột D: Tên khách hàng
+
             invoice_data = {
                 'fkey': fkey,
                 'item_name': item_name,
@@ -72,6 +145,9 @@ def _parse_hddt_file(hddt_bytes):
                 'invoice_number': _clean_string(row_values[19] if len(row_values) > 19 else None),
                 'invoice_date_raw': row_values[20] if len(row_values) > 20 else None,
                 'invoice_symbol_hddt': _clean_string(row_values[18] if len(row_values) > 18 else None), # Lấy ký hiệu hóa đơn từ cột S (index 18)
+                'mst_khach_hang': mst_khach_hang, # Thêm MST khách hàng
+                'unit_price': unit_price,         # Thêm đơn giá
+                'customer_name': customer_name,   # Thêm Tên khách hàng
                 'source_row': row_index
             }
 
@@ -120,13 +196,20 @@ def _parse_log_bom_file(log_bom_bytes):
             item_name = _clean_string(row_values[3] if len(row_values) > 3 else None)
             quantity = _to_float(row_values[4] if len(row_values) > 4 else None)
             total_amount = _to_float(row_values[6] if len(row_values) > 6 else None)
+            
+            # Lấy dữ liệu ngày tháng từ cột B (index 1) của bảng kê POS
+            transaction_date_raw = row_values[1] if len(row_values) > 1 else None
+            transaction_date_dt = _excel_date_to_datetime(transaction_date_raw)
+            # Chuyển đổi về định dạng dd/mm/yyyy
+            transaction_date_str = transaction_date_dt.strftime('%d/%m/%Y') if transaction_date_dt else 'N/A'
 
             pump_logs.append({
                 'fkey': fkey,
                 'item_name': item_name,
                 'quantity': quantity,
                 'total_amount': total_amount,
-                'source_row': row_index
+                'source_row': row_index,
+                'transaction_date': transaction_date_str # Lưu ngày tháng đã định dạng từ POS
             })
             
         if not pump_logs:
@@ -138,11 +221,133 @@ def _parse_log_bom_file(log_bom_bytes):
         raise ValueError(f"Lỗi khi đọc file Log Bơm: {e}")
 
 
-def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd_name, invoice_symbol_from_config):
+def _generate_discount_report_excel(reconciliation_data, discount_data, template_file_path="BaoCaoChietKhau.xlsx"):
+    """
+    Điền dữ liệu chênh lệch chiết khấu vào file Excel mẫu và tạo báo cáo.
+    Sử dụng openpyxl để ghi dữ liệu vào file mẫu đã có sẵn Table và Slicers.
+    Chỉ bao gồm các hóa đơn có discount_match == True.
+    """
+    try:
+        # Load the template workbook
+        # data_only=False để giữ lại công thức và các yếu tố khác như bảng, slicer
+        output_wb = load_workbook(template_file_path, data_only=False) 
+        output_ws = output_wb.active # Get the active sheet from the loaded template
+
+        # Extract selected CHXD name
+        selected_chxd_name = reconciliation_data.get('selected_chxd_name', 'N/A')
+
+        # Find min and max dates
+        min_date = datetime.max
+        max_date = datetime.min
+        
+        dates_found = False
+        for mismatch in reconciliation_data.get('detailed_mismatches', {}).get('amounts', []):
+            invoice_date_str = mismatch.get('invoice_date', '') # Already dd/mm/yyyy
+            if invoice_date_str and invoice_date_str != 'N/A':
+                try:
+                    current_date = datetime.strptime(invoice_date_str, '%d/%m/%Y')
+                    if current_date < min_date:
+                        min_date = current_date
+                    if current_date > max_date:
+                        max_date = current_date
+                    dates_found = True
+                except ValueError:
+                    # Handle cases where date string might be malformed
+                    pass
+
+        # Prepare date range text for A5
+        date_range_text = ""
+        if dates_found:
+            if min_date.date() == max_date.date(): # Same day
+                date_range_text = f"Ngày {min_date.day} tháng {min_date.month} năm {min_date.year}"
+            else: # Different days
+                date_range_text = f"Từ Ngày {min_date.day} tháng {min_date.month} năm {min_date.year} tới Ngày {max_date.day} tháng {max_date.month} năm {max_date.year}"
+        else:
+            date_range_text = "Không xác định được khoảng thời gian"
+        
+        # --- ÁP DỤNG ĐỊNH DẠNG FONT VÀ GHI NỘI DUNG VÀO A4, A5 ---
+        # Định nghĩa font và cỡ chữ tùy chỉnh cho A4 và A5
+        # Bạn có thể điều chỉnh 'Times New Roman' và 12 để khớp với font/cỡ chữ mong muốn
+        custom_header_font = Font(name='Times New Roman', size=12, bold=True) 
+
+        # Ghi vào A4
+        a4_cell = output_ws.cell(row=4, column=1, value=f"ĐƠN VỊ: CỬA HÀNG XĂNG DẦU {selected_chxd_name.upper()}")
+        a4_cell.font = custom_header_font
+        
+        # Ghi vào A5
+        a5_cell = output_ws.cell(row=5, column=1, value=f"Thời gian: {date_range_text}")
+        a5_cell.font = custom_header_font
+
+        # Clear existing data from row 11 downwards to prevent old data from remaining
+        # We assume that the data starts from row 11 and headers are in row 10.
+        if output_ws.max_row > 10:
+            # Xóa các hàng từ dòng 11 đến dòng cuối cùng
+            output_ws.delete_rows(11, output_ws.max_row - 10) 
+        
+        # Chuẩn bị dữ liệu để ghi
+        report_data_rows = []
+        if 'detailed_mismatches' in reconciliation_data and 'amounts' in reconciliation_data['detailed_mismatches']:
+            for i, mismatch in enumerate(reconciliation_data['detailed_mismatches']['amounts'], 1):
+                if mismatch.get('discount_match') == True:
+                    mst_khach_hang = mismatch.get('mst_khach_hang', '')
+                    item_name = mismatch.get('item_name', '')
+                    don_gia_chiet_khau = discount_data.get(mst_khach_hang, {}).get(item_name, 0.0)
+
+                    report_data_rows.append([
+                        i, # STT
+                        mismatch.get('customer_name', ''), # Tên khách hàng
+                        mst_khach_hang, # MST
+                        mismatch.get('invoice_number', ''), # Số hóa đơn
+                        mismatch.get('invoice_symbol_hddt', ''), # Ký hiệu hóa đơn
+                        mismatch.get('invoice_date', ''), # Ngày tháng
+                        item_name, # Mặt hàng
+                        mismatch.get('quantity', 0.0), # Số lượng
+                        don_gia_chiet_khau, # Đơn giá chiết khấu
+                        mismatch.get('actual_difference_amount_raw', 0.0) # Tiền chiết khấu
+                    ])
+
+        # Định nghĩa font và cỡ chữ tùy chỉnh cho dữ liệu bảng
+        # Bạn có thể điều chỉnh 'Times New Roman' và 10 để khớp với font/cỡ chữ mong muốn
+        custom_data_font = Font(name='Times New Roman', size=10) 
+
+        # Ghi dữ liệu vào worksheet, bắt đầu từ dòng 11 (Excel's 1-indexed)
+        data_start_row_excel = 11 
+        for r_idx, row_data in enumerate(report_data_rows):
+            for c_idx, cell_value in enumerate(row_data):
+                cell = output_ws.cell(row=data_start_row_excel + r_idx, column=c_idx + 1, value=cell_value)
+                
+                # Áp dụng font và cỡ chữ cho tất cả các ô dữ liệu
+                cell.font = custom_data_font
+
+                # Áp dụng định dạng số cho các cột tương ứng
+                # "Số lượng" là cột H (index 7, Excel column 8)
+                # "Đơn giá chiết khấu" là cột I (index 8, Excel column 9)
+                # "Tiền chiết khấu" là cột J (index 9, Excel column 10)
+                if c_idx == 7: # Số lượng
+                    cell.number_format = '#,##0.00'
+                elif c_idx == 8 or c_idx == 9: # Đơn giá chiết khấu, Tiền chiết khấu
+                    cell.number_format = '#,##0'
+        
+        # Lưu workbook vào buffer
+        output_buffer = io.BytesIO()
+        output_wb.save(output_buffer)
+        output_buffer.seek(0)
+        return output_buffer
+
+    except FileNotFoundError:
+        raise ValueError(f"Không tìm thấy file mẫu báo cáo chiết khấu: '{template_file_path}'. Vui lòng đảm bảo file tồn tại và có tên đúng.")
+    except Exception as e:
+        print(f"Lỗi khi tạo báo cáo chiết khấu bằng openpyxl (sử dụng mẫu): {e}")
+        raise ValueError(f"Đã xảy ra lỗi khi tạo báo cáo chiết khấu: {e}")
+
+def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd_name, invoice_symbol_from_config, discount_data=None):
     """
     Thực hiện đối soát dữ liệu giữa file Log Bơm (POS) và file Bảng kê HĐĐT.
-    Bổ sung bước xác thực CHXD và ký hiệu hóa đơn.
+    Bổ sung bước xác thực CHXD và ký hiệu hóa đơn, và tính toán chiết khấu.
     """
+    if discount_data is None:
+        discount_data = defaultdict(dict) # Đảm bảo có một dictionary rỗng nếu không có dữ liệu chiết khấu
+
     try:
         # --- BƯỚC XÁC THỰC CHXD TỪ FILE LOG BƠM (POS) ---
         # Tối ưu hóa: Chỉ đọc dữ liệu, bỏ qua định dạng, VBA, và liên kết
@@ -216,7 +421,7 @@ def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd_name, invoic
         # Nếu các bước xác thực thành công, tiếp tục xử lý đối soát
         parsed_hddt_data = _parse_hddt_file(hddt_bytes)
         hddt_invoices = parsed_hddt_data['pos_invoices']
-        log_bom_data = _parse_log_bom_file(log_bom_bytes)
+        log_bom_data = _parse_log_bom_file(log_bom_bytes) # log_bom_data giờ đã có 'transaction_date'
 
         if not hddt_invoices:
              raise ValueError("Không tìm thấy hóa đơn nào có FKEY bắt đầu bằng 'POS' để tiến hành đối soát.")
@@ -238,19 +443,51 @@ def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd_name, invoic
             log = log_map[fkey]
             inv = hddt_map[fkey]
             
-            inv_date = _excel_date_to_datetime(inv['invoice_date_raw'])
-            inv_date_str = inv_date.strftime('%d/%m/%Y') if inv_date else 'N/A'
+            # Lấy ngày tháng đã được định dạng từ dữ liệu Log Bơm (POS)
+            pos_date_str = log.get('transaction_date', 'N/A')
             
             mismatch_info = {
                 'fkey': fkey,
                 'invoice_number': inv.get('invoice_number', 'N/A'),
-                'invoice_date': inv_date_str
+                'invoice_date': pos_date_str, # Sử dụng ngày tháng từ POS
+                'hddt_amount': inv['total_amount'], 
+                'pos_amount': log['total_amount'],   
+                'customer_name': inv.get('customer_name', ''),
+                'mst_khach_hang': inv.get('mst_khach_hang', ''),
+                'item_name': inv.get('item_name', ''),
+                'quantity': inv.get('quantity', 0.0),
+                'invoice_symbol_hddt': inv.get('invoice_symbol_hddt', ''),
+                'invoice_date_raw': inv['invoice_date_raw'] # Giữ lại để debug nếu cần
             }
 
+            # Kiểm tra chênh lệch số lượng
             if abs(log['quantity'] - inv['quantity']) > 0.001:
                 quantity_mismatches.append(mismatch_info)
 
-            if abs(log['total_amount'] - inv['total_amount']) > 1:
+            # Tính toán chênh lệch thực tế (raw)
+            actual_difference_raw = log['total_amount'] - inv['total_amount']
+            mismatch_info['actual_difference_amount_raw'] = actual_difference_raw # Lưu giá trị raw để hiển thị và tính toán
+
+            # Kiểm tra chênh lệch thành tiền và tính toán chiết khấu
+            # Chênh lệch > 1 VNĐ được coi là có chênh lệch cần kiểm tra
+            if abs(actual_difference_raw) > 1: 
+                mst_khach_hang = inv.get('mst_khach_hang', '')
+                item_name = inv.get('item_name', '')
+                quantity = inv.get('quantity', 0.0) # Lấy số lượng từ HDDT
+
+                # Lấy số tiền chiết khấu cố định trên mỗi đơn vị từ dữ liệu chiết khấu
+                discount_amount_per_unit = discount_data.get(mst_khach_hang, {}).get(item_name, 0.0)
+                
+                # Tính toán tổng số tiền chiết khấu dự kiến cho hóa đơn này
+                # (Số tiền chiết khấu cố định trên mỗi đơn vị * Số lượng)
+                expected_discount_total_amount = round(discount_amount_per_unit * quantity)
+                mismatch_info['expected_discount_amount'] = expected_discount_total_amount # Lưu giá trị raw
+
+                # So sánh chênh lệch thực tế với chiết khấu dự kiến
+                # Coi là khớp nếu chênh lệch thực tế gần bằng số tiền chiết khấu dự kiến (sai số < 1 VNĐ)
+                discount_match = abs(round(actual_difference_raw) - expected_discount_total_amount) < 1 
+                mismatch_info['discount_match'] = discount_match
+                
                 amount_mismatches.append(mismatch_info)
                 
         item_summary = defaultdict(lambda: {'quantity': {'pos': 0, 'hddt': 0}, 'amount': {'pos': 0, 'hddt': 0}})
@@ -296,5 +533,5 @@ def perform_reconciliation(log_bom_bytes, hddt_bytes, selected_chxd_name, invoic
     except Exception as e:
         # In ra lỗi chi tiết để debug trên Render logs
         print(f"Lỗi trong quá trình đối soát: {e}")
-        raise e
+        raise ValueError(f"Đã xảy ra lỗi trong quá trình đối soát: {e}")
 

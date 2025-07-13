@@ -49,6 +49,9 @@
         .table-cell-title { @apply p-3 font-semibold text-gray-700 bg-gray-100; }
         .table-cell-data { @apply p-3; }
         .mismatch-fkeys { @apply text-xs text-red-600 font-mono break-all; }
+        /* Thêm style cho phần chiết khấu */
+        .discount-match { color: #15803d !important; font-weight: 600; } /* text-green-700 */
+        .discount-mismatch { color: #dc2626 !important; font-weight: 600; } /* text-red-700 */
     </style>
 </head>
 <body class="bg-gray-100 flex items-center justify-center min-h-screen py-8">
@@ -278,9 +281,16 @@
                                                 <span class="font-semibold text-green-700">Khớp</span>
                                             {% else %}
                                                 <span class="font-semibold text-red-700">Lệch tại các hóa đơn sau:</span>
-                                                <ul class="list-disc list-inside mt-1">
+                                                <ul class="list-disc list-inside mt-1 space-y-2">
                                                 {% for mismatch in reconciliation_data.detailed_mismatches.amounts %}
-                                                    <li class="mismatch-fkeys">Số HĐ: {{ mismatch.invoice_number }} | Ngày HĐ: {{ mismatch.invoice_date }} | FKEY: {{ mismatch.fkey }}</li>
+                                                    <li class="mismatch-fkeys">
+                                                        Số HĐ: {{ mismatch.invoice_number }} | Ngày HĐ: {{ mismatch.invoice_date }} | FKEY: {{ mismatch.fkey }}<br>
+                                                        Tiền POS: {{ mismatch.pos_amount | format_currency }} | Tiền HĐĐT: {{ mismatch.hddt_amount | format_currency }}<br>
+                                                        Tiền chiết khấu: {{ mismatch.expected_discount_amount | format_currency }} | Chênh lệch Log bơm/Hóa đơn: {{ mismatch.actual_difference_amount_raw | format_currency }} | Kết quả: 
+                                                        <span class="{% if mismatch.discount_match %}discount-match{% else %}discount-mismatch{% endif %}">
+                                                            {% if mismatch.discount_match %} KHỚP {% else %} LỆCH {% endif %}
+                                                        </span>
+                                                    </li>
                                                 {% endfor %}
                                                 </ul>
                                             {% endif %}
@@ -344,6 +354,16 @@
                             </table>
                         </div>
                     </div>
+                    
+                    {# Nút tải về báo cáo chiết khấu #}
+                    {% if reconciliation_data.detailed_mismatches.amounts %}
+                    <div class="mt-6">
+                        <button type="button" id="download-discount-report" class="w-full flex justify-center py-3 px-4 border rounded-md shadow-sm text-lg font-medium text-white bg-purple-600 hover:bg-purple-700">
+                            Tải về Báo cáo chiết khấu
+                        </button>
+                    </div>
+                    {% endif %}
+
                 </div>
                 {% endif %}
             </div>
@@ -501,7 +521,7 @@
                         // Chỉ kích hoạt lại nút nếu nó không bị disabled cố định
                         if (!submitThekhoButton.hasAttribute('data-permanently-disabled')) {
                             submitTheKhoButton.disabled = false;
-                            submitTheKhoButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                            submitTTheKhoButton.classList.remove('opacity-50', 'cursor-not-allowed');
                         }
                     }
 
@@ -529,10 +549,11 @@
             const invoiceNumberInputContainer = document.getElementById('invoice-input-container');
             const invoiceNumberInput = document.getElementById('invoice_number');
 
-            // Get initial form data from Flask context
-            const initialPricePeriods = "{{ form_data.price_periods if form_data.price_periods else '1' }}";
-            const initialInvoiceNumber = "{{ form_data.invoice_number if form_data.invoice_number else '' }}";
-            const isDateAmbiguous = {{ date_ambiguous | tojson }}; // Convert Python boolean to JS boolean
+            // Sử dụng default(false) và default({}) để đảm bảo biến luôn có giá trị hợp lệ
+            // Đảm bảo isDateAmbiguous là boolean tường minh bằng cách kiểm tra sự tồn tại của date_ambiguous
+            const isDateAmbiguous = {{ 'true' if date_ambiguous is defined and date_ambiguous else 'false' }};
+            const initialPricePeriods = "{{ form_data.price_periods if form_data.price_periods is defined else '1' }}";
+            const initialInvoiceNumber = "{{ form_data.invoice_number if form_data.invoice_number is defined else '' }}";
 
             console.log("DEBUG: isDateAmbiguous =", isDateAmbiguous);
             console.log("DEBUG: initialPricePeriods =", initialPricePeriods);
@@ -672,6 +693,60 @@
                 toggleInvoiceInput();
             }
         });
+
+        // Store reconciliation_data globally if it exists for the download button
+        // Đảm bảo reconciliation_data luôn là một object hợp lệ
+        window.reconciliationData = {{ reconciliation_data | default({}) | tojson }};
+
+        // Event listener for the download button
+        const downloadReportButton = document.getElementById('download-discount-report');
+        if (downloadReportButton) {
+            downloadReportButton.addEventListener('click', async () => {
+                if (!window.reconciliationData || !window.reconciliationData.detailed_mismatches || !window.reconciliationData.detailed_mismatches.amounts) {
+                    alert('Không có dữ liệu đối soát để tạo báo cáo chiết khấu.');
+                    return;
+                }
+
+                try {
+                    // Show a loading indicator (optional, but good UX)
+                    downloadReportButton.textContent = 'Đang tạo báo cáo...';
+                    downloadReportButton.disabled = true;
+                    downloadReportButton.classList.add('opacity-50', 'cursor-not-allowed');
+
+                    const response = await fetch('/generate_discount_report', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(window.reconciliationData),
+                    });
+
+                    if (response.ok) {
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.style.display = 'none';
+                        a.href = url;
+                        a.download = 'BaoCaoChietKhau.xlsx';
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        alert('Báo cáo chiết khấu đã được tải về thành công!');
+                    } else {
+                        const errorData = await response.json();
+                        alert(`Lỗi khi tải báo cáo chiết khấu: ${errorData.message || response.statusText}`);
+                    }
+                } catch (error) {
+                    console.error('Lỗi khi gửi yêu cầu tải báo cáo:', error);
+                    alert('Đã xảy ra lỗi không mong muốn khi tải báo cáo chiết khấu.');
+                } finally {
+                    // Hide loading indicator
+                    downloadReportButton.textContent = 'Tải về Báo cáo chiết khấu';
+                    downloadReportButton.disabled = false;
+                    downloadReportButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                }
+            });
+        }
     </script>
 </body>
 </html>

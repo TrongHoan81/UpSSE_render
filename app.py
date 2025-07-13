@@ -2,22 +2,23 @@ import base64
 import io
 import os
 import zipfile
-from flask import Flask, flash, redirect, render_template, request, send_file, url_for, get_flashed_messages
+from flask import Flask, flash, redirect, render_template, request, send_file, url_for, get_flashed_messages, jsonify
 from openpyxl import load_workbook
 import re # Import re for _clean_string_app
 import pandas as pd # Import pandas for excel date conversion in static data loading
+from collections import defaultdict # Import defaultdict
 
 # --- CÁC IMPORT CHO CÁC HANDLER ---
 from detector import detect_report_type 
 from hddt_handler import process_hddt_report
 from pos_handler import process_pos_report
-from doisoat_handler import perform_reconciliation
+from doisoat_handler import perform_reconciliation, _load_discount_data, _generate_discount_report_excel # Import _load_discount_data and _generate_discount_report_excel
 from TheKho_handler import process_stock_card_data
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'a_very_strong_and_unified_secret_key')
 
-# --- HÀM TIỆN ÍCH CHO VIỆC NẠP DỮ LIỆU CẤU HÌNH ---\
+# --- HÀM TIỆN ÍCH CHO VIỆC NẠP DỮ LIỆU CẤU HÌNH ---
 def _clean_string_app(s):
     """Làm sạch chuỗi, loại bỏ khoảng trắng thừa và ký tự '."""
     if s is None: return ""
@@ -27,10 +28,26 @@ def _clean_string_app(s):
 
 def _to_float_app(value):
     """Chuyển đổi giá trị sang float, xử lý các trường hợp lỗi."""
-    if value is None: return 0.0
+    if value is None: return 0.0 # Đã sửa lỗi cú pháp từ '===' sang 'is'
     try:
         return float(str(value).replace(',', '').strip())
     except (ValueError, TypeError): return 0.0
+
+# --- CUSTOM JINJA2 FILTER ---
+@app.template_filter('format_currency')
+def format_currency_filter(value):
+    """
+    Định dạng số thành chuỗi tiền tệ có dấu phẩy phân cách hàng nghìn.
+    Sử dụng cho hiển thị trong template Jinja2.
+    """
+    try:
+        # Chuyển đổi sang float trước để đảm bảo tính toán đúng
+        num = float(value)
+        # Định dạng số có dấu phẩy phân cách hàng nghìn và 0 chữ số thập phân
+        # Nếu muốn 2 chữ số thập phân, dùng f"{num:,.2f}"
+        return f"{num:,.0f}" 
+    except (ValueError, TypeError):
+        return "0" # Trả về "0" nếu giá trị không hợp lệ
 
 # --- HÀM NẠP TẤT CẢ DỮ LIỆU CẤU HÌNH TĨNH ---
 def load_all_static_config_data():
@@ -100,7 +117,7 @@ def load_all_static_config_data():
         
         # Lookups for POS handler (from Data_HDDT.xlsx)
         def get_lookup_pos_config(min_r, max_r, min_c=1, max_c=2):
-            return {_clean_string_app(row[0]).lower(): row[1] for row in ws_hddt.iter_rows(min_row=min_r, max_row=max_r, min_col=min_c, max_col=max_c, values_only=True) if row[0] and row[1] is not None}
+            return {_clean_string_app(row[0]).lower(): row[1] for row in ws_hddt.iter_rows(min_row=min_r, max_row=max_r, min_col=min_c, max_col=min_c+1, values_only=True) if row[0] and row[1] is not None}
         
         tmt_lookup_table_pos = {k: _to_float_app(v) for k, v in get_lookup_pos_config(10, 13).items()} # A10:B13
 
@@ -118,7 +135,7 @@ def load_all_static_config_data():
 
         # Lookups for HDDT handler (from Data_HDDT.xlsx)
         def get_lookup_hddt_config(min_r, max_r, min_c=1, max_c=2):
-            return {_clean_string_app(row[0]): row[1] for row in ws_hddt.iter_rows(min_row=min_r, max_row=max_r, min_col=min_c, max_col=max_c, values_only=True) if row[0] and row[1] is not None}
+            return {_clean_string_app(row[0]): row[1] for row in ws_hddt.iter_rows(min_row=min_r, max_row=max_r, min_col=min_c, max_col=min_c+1, values_only=True) if row[0] and row[1] is not None}
         
         phi_bvmt_map_raw = get_lookup_hddt_config(10, 13)
         phi_bvmt_map_hddt = {_clean_string_app(k): _to_float_app(v) for k, v in phi_bvmt_map_raw.items()}
@@ -150,6 +167,18 @@ def load_all_static_config_data():
         wb_dskh = load_workbook("DSKH.xlsx", data_only=True)
         static_data['hddt_config']["mst_to_makh_map"] = {_clean_string_app(r[2]): _clean_string_app(r[3]) for r in wb_dskh.active.iter_rows(min_row=2, max_col=4, values_only=True) if r[2]}
         wb_dskh.close()
+
+        # Load ChietKhau.xlsx for discount data
+        try:
+            with open("ChietKhau.xlsx", "rb") as f:
+                discount_file_bytes = f.read()
+            static_data['discount_data'] = _load_discount_data(discount_file_bytes)
+        except FileNotFoundError:
+            print("Cảnh báo: Không tìm thấy file 'ChietKhau.xlsx'. Chức năng chiết khấu sẽ không hoạt động.")
+            static_data['discount_data'] = defaultdict(dict) # Ensure it's an empty dict if file not found
+        except Exception as e:
+            print(f"Lỗi khi tải file 'ChietKhau.xlsx': {e}. Chức năng chiết khấu có thể bị ảnh hưởng.")
+            static_data['discount_data'] = defaultdict(dict)
 
         return static_data, None
     except FileNotFoundError as e:
@@ -325,14 +354,20 @@ def reconcile():
         log_bom_bytes = file_log_bom.read()
         hddt_bytes = file_hddt.read()
         
+        # Truyền dữ liệu chiết khấu đã tải vào hàm perform_reconciliation
+        discount_data = _global_static_config_data.get('discount_data', defaultdict(dict))
+
         reconciliation_data = perform_reconciliation(
             log_bom_bytes, 
             hddt_bytes, 
             selected_chxd_name, 
-            selected_chxd_symbol
+            selected_chxd_symbol,
+            discount_data # Truyền discount_data vào đây
         )
         
         if reconciliation_data:
+             # Thêm selected_chxd_name vào reconciliation_data để truyền cho frontend và sau này cho download
+             reconciliation_data['selected_chxd_name'] = selected_chxd_name
              flash('Đối soát thành công!', 'success')
         else:
              flash('Không có dữ liệu trả về từ chức năng đối soát.', 'warning')
@@ -346,6 +381,42 @@ def reconcile():
                            reconciliation_data=reconciliation_data,
                            form_data={"active_tab": "doisoat"},
                            date_ambiguous=False)
+
+# NEW ROUTE for generating discount report
+@app.route('/generate_discount_report', methods=['POST'])
+def generate_discount_report():
+    try:
+        # Nhận reconciliation_data từ request body (dạng JSON)
+        reconciliation_data_json = request.json
+        if not reconciliation_data_json:
+            raise ValueError("Không nhận được dữ liệu đối soát để tạo báo cáo.")
+
+        # Lấy discount_data từ biến global đã tải sẵn
+        discount_data = _global_static_config_data.get('discount_data', defaultdict(dict))
+
+        # Gọi hàm xử lý tạo báo cáo Excel
+        # Truyền reconciliation_data_json trực tiếp, nó đã chứa selected_chxd_name
+        excel_buffer = _generate_discount_report_excel(reconciliation_data_json, discount_data)
+        
+        if excel_buffer:
+            excel_buffer.seek(0)
+            return send_file(
+                excel_buffer,
+                as_attachment=True,
+                download_name='BaoCaoChietKhau.xlsx',
+                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+        else:
+            raise ValueError("Không thể tạo báo cáo chiết khấu.")
+
+    except ValueError as ve:
+        # Flash message không hoạt động trực tiếp với AJAX, nhưng có thể redirect để hiển thị
+        flash(str(ve).replace('\n', '<br>'), 'danger')
+        return jsonify({"status": "error", "message": str(ve)}), 400
+    except Exception as e:
+        flash(f"Đã xảy ra lỗi không mong muốn khi tạo báo cáo chiết khấu: {e}", 'danger')
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 
 @app.route('/process_stock_card', methods=['POST'])
 def process_stock_card():
@@ -402,3 +473,4 @@ def clear_flash_messages():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
