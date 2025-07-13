@@ -319,39 +319,33 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
         if not unique_dates:
             raise ValueError("Không tìm thấy dữ liệu hóa đơn hợp lệ nào trong file Bảng kê HDDT.")
         
-        # Nếu tìm thấy nhiều hơn một ngày duy nhất, yêu cầu xác nhận hoặc báo lỗi
+        # Nếu tìm thấy nhiều hơn một ngày duy nhất, báo lỗi (khôi phục hành vi gốc)
         if len(unique_dates) > 1:
-            # Sắp xếp các ngày để đảm bảo thứ tự hiển thị nhất quán
-            sorted_dates = sorted(list(unique_dates))
-            options = []
-            for d in sorted_dates:
-                # Tạo 2 tùy chọn: một là ngày/tháng/năm, một là tháng/ngày/năm
-                # Chỉ hiển thị 2 tùy chọn nếu chúng khác nhau
-                date1_str = d.strftime('%d/%m/%Y')
-                date2_str = d.strftime('%m/%d/%Y') # Format for potential ambiguity
-                
-                options.append({'text': date1_str, 'value': d.strftime('%Y-%m-%d')})
-                if date1_str != date2_str: # Only add if it's genuinely ambiguous
-                     # Tạo một đối tượng datetime mới để đảm bảo tháng và ngày được hoán đổi nếu cần
-                    ambiguous_date_obj = datetime(d.year, d.day, d.month)
-                    options.append({'text': ambiguous_date_obj.strftime('%d/%m/%Y'), 'value': ambiguous_date_obj.strftime('%Y-%m-%d')})
-            
-            # Loại bỏ các tùy chọn trùng lặp và sắp xếp lại
-            unique_options = []
-            seen_values = set()
-            for opt in options:
-                if opt['value'] not in seen_values:
-                    unique_options.append(opt)
-                    seen_values.add(opt['value'])
-            
-            # Sắp xếp lại các tùy chọn theo ngày tháng
-            unique_options.sort(key=lambda x: datetime.strptime(x['value'], '%Y-%m-%d'))
-
-            return {'choice_needed': True, 'options': unique_options}
+            raise ValueError("Công cụ chỉ chạy được khi bạn kết xuất hóa đơn trong 1 ngày duy nhất.")
         
-        # Nếu chỉ có một ngày duy nhất
+        # Nếu chỉ có một ngày duy nhất được tìm thấy
         the_date = unique_dates.pop()
-        final_date = datetime(the_date.year, the_date.month, the_date.day) # Chuyển đổi về datetime object
+        
+        # Kiểm tra tính mơ hồ của ngày tháng (day <= 12)
+        if the_date.day > 12:
+            final_date = datetime(the_date.year, the_date.month, the_date.day)
+        else:
+            # Tạo hai khả năng hiểu ngày tháng (DD/MM/YYYY và MM/DD/YYYY)
+            date1 = datetime(the_date.year, the_date.month, the_date.day)
+            date2 = datetime(the_date.year, the_date.day, the_date.month)
+            
+            if date1 != date2:
+                # Nếu hai khả năng khác nhau, có sự mơ hồ, yêu cầu người dùng xác nhận
+                options = [
+                    {'text': date1.strftime('%d/%m/%Y'), 'value': date1.strftime('%Y-%m-%d')},
+                    {'text': date2.strftime('%d/%m/%Y'), 'value': date2.strftime('%Y-%m-%d')}
+                ]
+                # Sắp xếp các tùy chọn để đảm bảo thứ tự nhất quán
+                options.sort(key=lambda x: datetime.strptime(x['value'], '%Y-%m-%d'))
+                return {'choice_needed': True, 'options': options}
+            else:
+                # Không có sự mơ hồ (ví dụ: 01/01/2025), sử dụng date1
+                final_date = date1
 
     all_rows = list(bkhd_ws.iter_rows(min_row=11, values_only=True))
     print(f"DEBUG: Tổng số dòng đọc được từ file Excel (từ dòng 11): {len(all_rows)}")
