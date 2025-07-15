@@ -61,6 +61,48 @@ def _create_hddt_bvmt_row(original_row, phi_bvmt, static_data_hddt, khu_vuc):
     for i in [5, 31, 32, 33]: bvmt_row[i] = ''
     return bvmt_row
 
+def _parse_date_from_excel_cell(date_val):
+    """
+    Attempts to parse a date value from an Excel cell, handling various formats.
+    Returns a datetime.date object if successful, None otherwise.
+    """
+    if date_val is None:
+        return None
+
+    # 1. Already a datetime object (openpyxl's native parsing)
+    if isinstance(date_val, datetime):
+        return date_val.date()
+
+    # 2. Excel serial number
+    if isinstance(date_val, (int, float)):
+        try:
+            # Excel's epoch is 1899-12-30 for Windows, 1904-01-01 for Mac.
+            # pandas defaults to 1899-12-30, which is common.
+            # Handle potential float issues (e.g., 45998.0)
+            return pd.to_datetime(float(date_val), unit='D', origin='1899-12-30').date()
+        except (ValueError, TypeError):
+            pass # Fall through to string parsing
+
+    # 3. String formats
+    if isinstance(date_val, str):
+        date_str = date_val.strip()
+        # Common date formats to try
+        date_formats = [
+            '%d/%m/%Y', # 13/07/2025
+            '%d-%m-%Y', # 13-07-2025
+            '%Y/%m/%d', # 2025/07/13
+            '%Y-%m-%d', # 2025-07-13
+            '%d/%m/%y', # 13/07/25
+            '%d-%m-%y', # 13-07-25
+        ]
+        for fmt in date_formats:
+            try:
+                return datetime.strptime(date_str, fmt).date()
+            except ValueError:
+                continue # Try next format
+    
+    return None # If no format matches
+
 # --- Hàm xử lý chính ---
 def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_chxd, final_date, summary_suffix_map):
     """Tạo các dòng dữ liệu cho file UpSSE từ dữ liệu bảng kê HĐĐT."""
@@ -262,27 +304,49 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
     else:
         unique_dates = set()
         for row in bkhd_ws.iter_rows(min_row=11, values_only=True):
-            if _to_float_hddt(row[8] if len(row) > 8 else None) > 0:
-                date_val = row[20] if len(row) > 20 else None
-                if isinstance(date_val, datetime):
-                    unique_dates.add(date_val.date())
-                elif isinstance(date_val, (int, float)):
-                    try:
-                        converted_date_obj = pd.to_datetime(date_val, unit='D', origin='1899-12-30').to_pydatetime()
-                        unique_dates.add(converted_date_obj.date())
-                    except (ValueError, TypeError): pass
-                elif isinstance(date_val, str):
-                    try: unique_dates.add(datetime.strptime(date_val, '%d/%m/%Y').date())
-                    except ValueError: continue
-        if not unique_dates: raise ValueError("Không tìm thấy dữ liệu hóa đơn hợp lệ nào trong file Bảng kê HDDT.")
-        if len(unique_dates) > 1: raise ValueError("Công cụ chỉ chạy được khi bạn kết xuất hóa đơn trong 1 ngày duy nhất.")
+            # Chỉ xử lý các dòng có số lượng (cột I, index 8) lớn hơn 0
+            quantity_val = _to_float_hddt(row[8] if len(row) > 8 else None)
+            if quantity_val > 0:
+                date_val_from_cell = row[20] if len(row) > 20 else None # Cột U (index 20)
+                parsed_date = _parse_date_from_excel_cell(date_val_from_cell)
+                if parsed_date:
+                    unique_dates.add(parsed_date)
+                else:
+                    # Ghi log cảnh báo nếu không phân tích được ngày tháng từ một dòng hợp lệ
+                    print(f"WARNING: Could not parse date '{date_val_from_cell}' from row with quantity > 0. Row data: {row}")
+        
+        # Nếu sau khi duyệt tất cả các dòng, tập hợp unique_dates vẫn rỗng
+        if not unique_dates:
+            raise ValueError("Không tìm thấy dữ liệu hóa đơn hợp lệ nào trong file Bảng kê HDDT.")
+        
+        # Nếu tìm thấy nhiều hơn một ngày duy nhất, báo lỗi (khôi phục hành vi gốc)
+        if len(unique_dates) > 1:
+            raise ValueError("Công cụ chỉ chạy được khi bạn kết xuất hóa đơn trong 1 ngày duy nhất.")
+        
+        # Nếu chỉ có một ngày duy nhất được tìm thấy
         the_date = unique_dates.pop()
-        if the_date.day > 12: final_date = datetime(the_date.year, the_date.month, the_date.day)
+        
+        # Kiểm tra tính mơ hồ của ngày tháng (day <= 12)
+        if the_date.day > 12:
+            final_date = datetime(the_date.year, the_date.month, the_date.day)
         else:
-            date1, date2 = datetime(the_date.year, the_date.month, the_date.day), datetime(the_date.year, the_date.day, the_date.month)
-            if date1 != date2: return {'choice_needed': True, 'options': [{'text': date1.strftime('%d/%m/%Y'), 'value': date1.strftime('%Y-%m-%d')}, {'text': date2.strftime('%d/%m/%Y'), 'value': date2.strftime('%Y-%m-%d')}]}
-            final_date = date1
-    
+            # Tạo hai khả năng hiểu ngày tháng (DD/MM/YYYY và MM/DD/YYYY)
+            date1 = datetime(the_date.year, the_date.month, the_date.day)
+            date2 = datetime(the_date.year, the_date.day, the_date.month)
+            
+            if date1 != date2:
+                # Nếu hai khả năng khác nhau, có sự mơ hồ, yêu cầu người dùng xác nhận
+                options = [
+                    {'text': date1.strftime('%d/%m/%Y'), 'value': date1.strftime('%Y-%m-%d')},
+                    {'text': date2.strftime('%d/%m/%Y'), 'value': date2.strftime('%Y-%m-%d')}
+                ]
+                # Sắp xếp các tùy chọn để đảm bảo thứ tự nhất quán
+                options.sort(key=lambda x: datetime.strptime(x['value'], '%Y-%m-%d'))
+                return {'choice_needed': True, 'options': options}
+            else:
+                # Không có sự mơ hồ (ví dụ: 01/01/2025), sử dụng date1
+                final_date = date1
+
     all_rows = list(bkhd_ws.iter_rows(min_row=11, values_only=True))
     print(f"DEBUG: Tổng số dòng đọc được từ file Excel (từ dòng 11): {len(all_rows)}")
 
@@ -354,4 +418,3 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
             output_dict['new'] = empty_buffer_new
 
         return output_dict
-
