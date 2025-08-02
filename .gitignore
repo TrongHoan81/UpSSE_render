@@ -1,3 +1,5 @@
 __pycache__/
-*.pyc
 venv/
+.venv/
+env/
+Data_HDDT_old.xlsx
