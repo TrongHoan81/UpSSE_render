@@ -4,15 +4,16 @@ import os
 import zipfile
 from flask import Flask, flash, redirect, render_template, request, send_file, url_for, get_flashed_messages, jsonify
 from openpyxl import load_workbook
-import re # Import re for _clean_string_app
-import pandas as pd # Import pandas for excel date conversion in static data loading
-from collections import defaultdict # Import defaultdict
+import re  # Import re for _clean_string_app
+import pandas as pd  # Import pandas for excel date conversion in static data loading
+from collections import defaultdict  # Import defaultdict
+from datetime import datetime  # <-- THÊM: dùng để xử lý ngày cho tên file
 
 # --- CÁC IMPORT CHO CÁC HANDLER ---
-from detector import detect_report_type 
+from detector import detect_report_type
 from hddt_handler import process_hddt_report
 from pos_handler import process_pos_report
-from doisoat_handler import perform_reconciliation, _load_discount_data, _generate_discount_report_excel # Import _load_discount_data and _generate_discount_report_excel
+from doisoat_handler import perform_reconciliation, _load_discount_data, _generate_discount_report_excel  # Import _load_discount_data and _generate_discount_report_excel
 from TheKho_handler import process_stock_card_data
 
 app = Flask(__name__)
@@ -21,17 +22,21 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'a_very_strong_and_unifi
 # --- HÀM TIỆN ÍCH CHO VIỆC NẠP DỮ LIỆU CẤU HÌNH ---
 def _clean_string_app(s):
     """Làm sạch chuỗi, loại bỏ khoảng trắng thừa và ký tự '."""
-    if s is None: return ""
+    if s is None:
+        return ""
     cleaned_s = str(s).strip()
-    if cleaned_s.startswith("'"): cleaned_s = cleaned_s[1:]
+    if cleaned_s.startswith("'"):
+        cleaned_s = cleaned_s[1:]
     return re.sub(r'\s+', ' ', cleaned_s)
 
 def _to_float_app(value):
     """Chuyển đổi giá trị sang float, xử lý các trường hợp lỗi."""
-    if value is None: return 0.0
+    if value is None:
+        return 0.0
     try:
         return float(str(value).replace(',', '').strip())
-    except (ValueError, TypeError): return 0.0
+    except (ValueError, TypeError):
+        return 0.0
 
 # --- CUSTOM JINJA2 FILTER ---
 @app.template_filter('format_currency')
@@ -42,9 +47,136 @@ def format_currency_filter(value):
     """
     try:
         num = float(value)
-        return f"{num:,.0f}" 
+        return f"{num:,.0f}"
     except (ValueError, TypeError):
         return "0"
+
+# =========================
+#   HÀM PHỤ CHO TÊN FILE
+# =========================
+
+def _sanitize_filename_piece(s: str) -> str:
+    """
+    Làm sạch chuỗi để đưa vào tên file: loại ký tự không hợp lệ cho tên file.
+    Giữ lại ký tự Unicode (kể cả có dấu), khoảng trắng và dấu chấm giai đoạn.
+    """
+    if not s:
+        return "Untitled"
+    s = s.strip()
+    # Loại bỏ các ký tự gây lỗi tên file phổ biến trên nhiều hệ thống
+    return re.sub(r'[\\/:*?"<>|\r\n]+', '_', s)
+
+def _parse_date_like_hddt(cell_val):
+    """
+    Bắt chước logic parse ngày của hddt_handler._parse_date_from_excel_cell để phục vụ đặt tên file.
+    Trả về đối tượng date nếu parse được, ngược lại None.
+    """
+    if cell_val is None:
+        return None
+    if isinstance(cell_val, datetime):
+        return cell_val.date()
+
+    if isinstance(cell_val, (int, float)):
+        try:
+            return pd.to_datetime(float(cell_val), unit='D', origin='1899-12-30').date()
+        except Exception:
+            return None
+
+    if isinstance(cell_val, str):
+        date_str = cell_val.strip()
+        fmts = ['%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%Y-%m-%d', '%d/%m/%y', '%d-%m-%y']
+        for fmt in fmts:
+            try:
+                return datetime.strptime(date_str, fmt).date()
+            except ValueError:
+                continue
+    return None
+
+def _parse_date_like_pos(cell_val):
+    """
+    Bắt chước logic parse ngày của pos_handler (_pos_parse_date) ở mức tối thiểu để đặt tên file.
+    Trả về đối tượng date nếu parse được, ngược lại None.
+    """
+    if cell_val is None:
+        return None
+    if isinstance(cell_val, datetime):
+        return cell_val.date()
+
+    if isinstance(cell_val, (int, float)):
+        try:
+            return pd.to_datetime(float(cell_val), unit='D', origin='1899-12-30').date()
+        except Exception:
+            return None
+
+    if isinstance(cell_val, str):
+        date_str = cell_val.strip()
+        fmts = [
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%d',
+            '%d-%m-%Y %H:%M:%S',
+            '%d-%m-%Y',
+            '%d/%m/%Y %H:%M:%S',
+            '%d/%m/%Y',
+        ]
+        for fmt in fmts:
+            try:
+                return datetime.strptime(date_str, fmt).date()
+            except ValueError:
+                continue
+    return None
+
+def _extract_report_date_for_filename(file_bytes: bytes, report_type: str, confirmed_date_str: str | None) -> datetime.date:
+    """
+    Trả về ngày (date) dùng đặt tên file.
+    - HDDT: nếu có confirmed_date_str (YYYY-MM-DD) thì dùng luôn.
+            ngược lại quét cột ngày của bảng kê như hddt_handler để tìm 1 ngày duy nhất.
+    - POS:  quét cột ngày trong bảng kê POS; nếu nhiều ngày, lấy ngày nhỏ nhất.
+    Nếu không tìm được, fallback về ngày hôm nay (để không làm hỏng luồng tải file).
+    """
+    try:
+        if report_type == 'HDDT':
+            if confirmed_date_str:
+                try:
+                    return datetime.strptime(confirmed_date_str, '%Y-%m-%d').date()
+                except Exception:
+                    pass
+            # Quét file để lấy ngày duy nhất
+            wb = load_workbook(io.BytesIO(file_bytes), data_only=True)
+            ws = wb.active
+            unique_dates = set()
+            for row in ws.iter_rows(min_row=11, values_only=True):
+                qty = _to_float_app(row[8] if len(row) > 8 else None)
+                if qty > 0:
+                    dt = _parse_date_like_hddt(row[20] if len(row) > 20 else None)
+                    if dt:
+                        unique_dates.add(dt)
+            wb.close()
+            if unique_dates:
+                # file chuẩn là 1 ngày; nếu lỡ nhiều, lấy min để ổn định
+                return min(unique_dates)
+        elif report_type == 'POS':
+            wb = load_workbook(io.BytesIO(file_bytes), data_only=True)
+            ws = wb.active
+            unique_dates = set()
+            # Dòng dữ liệu POS bắt đầu từ row 5 (tham chiếu đọc hiện tại)
+            for row in ws.iter_rows(min_row=5, values_only=True):
+                # cột ngày của POS trong handler là row[3]
+                dt = _parse_date_like_pos(row[3] if len(row) > 3 else None)
+                if dt:
+                    unique_dates.add(dt)
+            wb.close()
+            if unique_dates:
+                return min(unique_dates)
+    except Exception:
+        pass
+
+    # Fallback an toàn
+    return datetime.today().date()
+
+def _make_base_filename(store_name: str, file_date: datetime.date) -> str:
+    store = _sanitize_filename_piece(store_name)
+    date_part = f"{file_date.day:02d}.{file_date.month:02d}.{file_date.year}"
+    return f"{store}.{date_part}"
 
 # --- HÀM NẠP TẤT CẢ DỮ LIỆU CẤU HÌNH TĨNH ---
 def load_all_static_config_data():
@@ -61,19 +193,19 @@ def load_all_static_config_data():
         # Data for POS handler
         chxd_detail_map_pos = {}
         store_specific_x_lookup_pos = {}
-        
+
         # Data for HDDT handler
         chxd_list_for_hddt = []
         tk_mk_map_hddt = {}
         khhd_map_hddt = {}
         chxd_to_khuvuc_map_hddt = {}
         vu_viec_map_hddt = {}
-        
+
         vu_viec_headers = [_clean_string_app(cell.value) for cell in ws_hddt[2][4:9]]
 
         for row_idx in range(3, ws_hddt.max_row + 1):
             row_values = [cell.value for cell in ws_hddt[row_idx]]
-            
+
             if len(row_values) > 11:
                 chxd_name = _clean_string_app(row_values[3])
                 if chxd_name:
@@ -90,18 +222,21 @@ def load_all_static_config_data():
                         "dầu do 0,05s-ii": row_values[6],
                         "dầu do 0,001s-v": row_values[7]
                     }
-                    
+
                     # For HDDT handler
                     if chxd_name not in chxd_list_for_hddt:
                         chxd_list_for_hddt.append(chxd_name)
-                    
+
                     ma_kho = _clean_string_app(row_values[9])
                     khhd = _clean_string_app(row_values[10])
                     khu_vuc = _clean_string_app(row_values[11])
 
-                    if ma_kho: tk_mk_map_hddt[chxd_name] = ma_kho
-                    if khhd: khhd_map_hddt[chxd_name] = khhd
-                    if khu_vuc: chxd_to_khuvuc_map_hddt[chxd_name] = khu_vuc
+                    if ma_kho:
+                        tk_mk_map_hddt[chxd_name] = ma_kho
+                    if khhd:
+                        khhd_map_hddt[chxd_name] = khhd
+                    if khu_vuc:
+                        chxd_to_khuvuc_map_hddt[chxd_name] = khu_vuc
 
                     vu_viec_map_hddt[chxd_name] = {}
                     vu_viec_data_row = row_values[4:9]
@@ -109,15 +244,19 @@ def load_all_static_config_data():
                         if header:
                             key = "Dầu mỡ nhờn" if i == len(vu_viec_headers) - 1 else header
                             vu_viec_map_hddt[chxd_name][key] = _clean_string_app(vu_viec_data_row[i])
-        
+
         def get_lookup_pos_config(min_r, max_r, min_c=1, max_c=2):
-            return {_clean_string_app(row[0]).lower(): row[1] for row in ws_hddt.iter_rows(min_row=min_r, max_row=max_r, min_col=min_c, max_col=min_c+1, values_only=True) if row[0] and row[1] is not None}
-        
+            return {
+                _clean_string_app(row[0]).lower(): row[1]
+                for row in ws_hddt.iter_rows(min_row=min_r, max_row=max_r, min_col=min_c, max_col=min_c + 1, values_only=True)
+                if row[0] and row[1] is not None
+            }
+
         tmt_lookup_table_pos = {k: _to_float_app(v) for k, v in get_lookup_pos_config(10, 13).items()}
 
         static_data['pos_config'] = {
             "lookup_table": get_lookup_pos_config(4, 7),
-            "tmt_lookup_table": tmt_lookup_table_pos, 
+            "tmt_lookup_table": tmt_lookup_table_pos,
             "s_lookup_table": get_lookup_pos_config(29, 31),
             "t_lookup_regular": get_lookup_pos_config(33, 35),
             "t_lookup_tmt": get_lookup_pos_config(48, 50),
@@ -128,8 +267,12 @@ def load_all_static_config_data():
         }
 
         def get_lookup_hddt_config(min_r, max_r, min_c=1, max_c=2):
-            return {_clean_string_app(row[0]): row[1] for row in ws_hddt.iter_rows(min_row=min_r, max_row=max_r, min_col=min_c, max_col=min_c+1, values_only=True) if row[0] and row[1] is not None}
-        
+            return {
+                _clean_string_app(row[0]): row[1]
+                for row in ws_hddt.iter_rows(min_row=min_r, max_row=max_r, min_col=min_c, max_col=min_c + 1, values_only=True)
+                if row[0] and row[1] is not None
+            }
+
         phi_bvmt_map_raw = get_lookup_hddt_config(10, 13)
         phi_bvmt_map_hddt = {_clean_string_app(k): _to_float_app(v) for k, v in phi_bvmt_map_raw.items()}
 
@@ -155,18 +298,18 @@ def load_all_static_config_data():
         # Load MaHH.xlsx và đọc thêm cột "Loại hàng hóa"
         wb_mahh = load_workbook("MaHH.xlsx", data_only=True)
         ws_mahh = wb_mahh.active
-        
+
         ma_hang_map = {}
-        petroleum_products_list = [] # Danh sách để lưu các mặt hàng xăng dầu
+        petroleum_products_list = []  # Danh sách để lưu các mặt hàng xăng dầu
         # Duyệt file MaHH.xlsx, đọc 4 cột (A, B, C, D)
         for r in ws_mahh.iter_rows(min_row=2, max_col=4, values_only=True):
             ten_hang = _clean_string_app(r[0])
             ma_hang = _clean_string_app(r[2])
-            loai_hang = _clean_string_app(r[3]) # Đọc cột D - Loại hàng hóa
+            loai_hang = _clean_string_app(r[3])  # Đọc cột D - Loại hàng hóa
 
             if ten_hang and ma_hang:
                 ma_hang_map[ten_hang] = ma_hang
-            
+
             # Nếu loại hàng là "Xăng dầu", thêm vào danh sách
             if ten_hang and loai_hang.lower() == 'xăng dầu':
                 petroleum_products_list.append(ten_hang)
@@ -181,7 +324,11 @@ def load_all_static_config_data():
 
         # Load DSKH.xlsx
         wb_dskh = load_workbook("DSKH.xlsx", data_only=True)
-        static_data['hddt_config']["mst_to_makh_map"] = {_clean_string_app(r[2]): _clean_string_app(r[3]) for r in wb_dskh.active.iter_rows(min_row=2, max_col=4, values_only=True) if r[2]}
+        static_data['hddt_config']["mst_to_makh_map"] = {
+            _clean_string_app(r[2]): _clean_string_app(r[3])
+            for r in wb_dskh.active.iter_rows(min_row=2, max_col=4, values_only=True)
+            if r[2]
+        }
         wb_dskh.close()
 
         # Load ChietKhau.xlsx for discount data
@@ -214,7 +361,7 @@ def get_chxd_list():
     if _static_config_error:
         flash(_static_config_error, "danger")
         return []
-    
+
     chxd_data = []
     for chxd_name, details in _global_static_config_data['pos_config']['chxd_detail_map'].items():
         chxd_data.append({
@@ -228,7 +375,7 @@ def get_chxd_list():
 def index():
     """Hiển thị trang upload chính."""
     chxd_list = get_chxd_list()
-    active_tab = request.args.get('active_tab', 'upsse') 
+    active_tab = request.args.get('active_tab', 'upsse')
     return render_template('index.html', chxd_list=chxd_list, form_data={"active_tab": active_tab}, date_ambiguous=False)
 
 @app.route('/process', methods=['POST'])
@@ -242,7 +389,7 @@ def process():
         "confirmed_date": request.form.get('confirmed_date'),
         "encoded_file": request.form.get('file_content_b64')
     }
-    
+
     try:
         if _static_config_error:
             raise ValueError(_static_config_error)
@@ -260,19 +407,20 @@ def process():
             flash('Vui lòng tải lên file Bảng kê.', 'warning')
             return redirect(url_for('index', active_tab='upsse'))
 
+        # Nhận diện loại bảng kê (POS/HDDT)
         report_type = detect_report_type(file_content)
-        result = None
 
         selected_chxd_symbol = None
         for chxd_info in chxd_list:
             if chxd_info['name'] == form_data["selected_chxd"]:
                 selected_chxd_symbol = chxd_info['symbol']
                 break
-        
+
         if not selected_chxd_symbol:
             flash(f"Không tìm thấy ký hiệu hóa đơn cho CHXD '{form_data['selected_chxd']}'. Vui lòng kiểm tra file cấu hình Data_HDDT.xlsx.", 'danger')
             return redirect(url_for('index', active_tab='upsse'))
 
+        # Gọi handler tạo dữ liệu như cũ (KHÔNG ĐỔI THUẬT TOÁN)
         if report_type == 'POS':
             result = process_pos_report(
                 file_content_bytes=file_content,
@@ -295,28 +443,40 @@ def process():
         else:
             raise ValueError("Không thể tự động nhận diện loại Bảng kê. Vui lòng kiểm tra lại file Excel bạn đã tải lên.")
 
+        # Nhánh cần người dùng xác nhận ngày (giữ nguyên)
         if isinstance(result, dict) and result.get('choice_needed'):
             form_data["encoded_file"] = base64.b64encode(file_content).decode('utf-8')
             return render_template('index.html', chxd_list=chxd_list, date_ambiguous=True, date_options=result['options'], form_data=form_data)
-        
-        elif isinstance(result, dict) and ('old' in result or 'new' in result):
+
+        # Tạo phần tên file mới dựa theo cửa hàng + ngày
+        report_date = _extract_report_date_for_filename(file_content, report_type, form_data["confirmed_date"])
+        base_filename = _make_base_filename(form_data["selected_chxd"], report_date)
+
+        # Hai giai đoạn giá (trả về dict với 'old' và/hoặc 'new')
+        if isinstance(result, dict) and ('old' in result or 'new' in result):
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
                 if result.get('old'):
                     result['old'].seek(0)
-                    zipf.writestr('UpSSE_gia_cu.xlsx', result['old'].read())
+                    zipf.writestr(f'{base_filename}_GiaCu.xlsx', result['old'].read())
                 if result.get('new'):
                     result['new'].seek(0)
-                    zipf.writestr('UpSSE_gia_moi.xlsx', result['new'].read())
+                    zipf.writestr(f'{base_filename}_GiaMoi.xlsx', result['new'].read())
             zip_buffer.seek(0)
             flash('Xử lý Đồng bộ SSE thành công!', 'success')
+            # Giữ tên zip ngoài như cũ để tránh ảnh hưởng automation phía người dùng (chỉ đổi tên file bên trong)
             return send_file(zip_buffer, as_attachment=True, download_name='UpSSE_2_giai_doan.zip', mimetype='application/zip')
 
+        # Một giai đoạn giá: trả về 1 file .xlsx
         elif isinstance(result, io.BytesIO):
             result.seek(0)
             flash('Xử lý Đồng bộ SSE thành công!', 'success')
-            return send_file(result, as_attachment=True, download_name='UpSSE.xlsx', mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        
+            return send_file(
+                result,
+                as_attachment=True,
+                download_name=f'{base_filename}.xlsx',
+                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
         else:
             raise ValueError("Hàm xử lý không trả về kết quả hợp lệ.")
 
@@ -349,35 +509,35 @@ def reconcile():
             if chxd_info['name'] == selected_chxd_name:
                 selected_chxd_symbol = chxd_info['symbol']
                 break
-        
+
         if not selected_chxd_symbol:
             flash(f"Không tìm thấy ký hiệu hóa đơn cho CHXD '{selected_chxd_name}'.", 'danger')
             return redirect(url_for('index', active_tab='doisoat'))
 
         log_bom_bytes = file_log_bom.read()
         hddt_bytes = file_hddt.read()
-        
+
         discount_data = _global_static_config_data.get('discount_data', defaultdict(dict))
 
         reconciliation_data = perform_reconciliation(
-            log_bom_bytes, 
-            hddt_bytes, 
-            selected_chxd_name, 
+            log_bom_bytes,
+            hddt_bytes,
+            selected_chxd_name,
             selected_chxd_symbol,
             discount_data
         )
-        
+
         if reconciliation_data:
-             reconciliation_data['selected_chxd_name'] = selected_chxd_name
-             flash('Đối soát thành công!', 'success')
+            reconciliation_data['selected_chxd_name'] = selected_chxd_name
+            flash('Đối soát thành công!', 'success')
         else:
-             flash('Không có dữ liệu trả về từ chức năng đối soát.', 'warning')
+            flash('Không có dữ liệu trả về từ chức năng đối soát.', 'warning')
 
     except Exception as e:
         flash(f"Lỗi trong quá trình đối soát: {e}", 'danger')
 
-    return render_template('index.html', 
-                           chxd_list=chxd_list_data, 
+    return render_template('index.html',
+                           chxd_list=chxd_list_data,
                            reconciliation_data=reconciliation_data,
                            form_data={"active_tab": "doisoat"},
                            date_ambiguous=False)
@@ -391,7 +551,7 @@ def generate_discount_report():
 
         discount_data = _global_static_config_data.get('discount_data', defaultdict(dict))
         excel_buffer = _generate_discount_report_excel(reconciliation_data_json, discount_data)
-        
+
         if excel_buffer:
             excel_buffer.seek(0)
             return send_file(
@@ -431,7 +591,7 @@ def process_stock_card():
             return render_template('index.html', chxd_list=chxd_list, form_data={"active_tab": "thekho"}, date_ambiguous=False)
 
         excel_buffer = process_stock_card_data(uploaded_files, selected_chxd)
-        
+
         if excel_buffer:
             excel_buffer.seek(0)
             flash('Xử lý Thẻ kho tự động thành công!', 'success')
