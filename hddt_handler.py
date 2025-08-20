@@ -116,34 +116,34 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
     
     processed_row_count = 0
     for bkhd_row in rows_to_process:
-        if _to_float_hddt(bkhd_row[8] if len(bkhd_row) > 8 else None) <= 0: 
+        if _to_float_hddt(bkhd_row[9] if len(bkhd_row) > 9 else None) <= 0: 
             continue
         
         processed_row_count += 1
-        ten_kh, ten_mat_hang = _clean_string_hddt(bkhd_row[3]), _clean_string_hddt(bkhd_row[6])
+        ten_kh, ten_mat_hang = _clean_string_hddt(bkhd_row[4]), _clean_string_hddt(bkhd_row[7])
         is_anonymous, is_petrol = ("không lấy hóa đơn" in ten_kh.lower()), (ten_mat_hang in static_data_hddt['phi_bvmt_map'])
         
         if not is_anonymous or not is_petrol:
             new_upsse_row = [''] * 37
             new_upsse_row[9], new_upsse_row[1], new_upsse_row[31], new_upsse_row[2] = ma_kho, ten_kh, ten_kh, final_date
-            so_hd_goc = str(bkhd_row[19] or '').strip()
-            new_upsse_row[3] = f"HN{so_hd_goc[-6:]}" if selected_chxd == "Nguyễn Huệ" else f"{(str(bkhd_row[18] or '').strip())[-2:]}{so_hd_goc[-6:]}"
-            new_upsse_row[4] = _clean_string_hddt(bkhd_row[17]) + _clean_string_hddt(bkhd_row[18])
+            so_hd_goc = str(bkhd_row[20] or '').strip()
+            new_upsse_row[3] = f"HN{so_hd_goc[-6:]}" if selected_chxd == "Nguyễn Huệ" else f"{(str(bkhd_row[19] or '').strip())[-2:]}{so_hd_goc[-6:]}"
+            new_upsse_row[4] = _clean_string_hddt(bkhd_row[18]) + _clean_string_hddt(bkhd_row[19])
             new_upsse_row[5], new_upsse_row[7], new_upsse_row[6] = f"Xuất bán hàng theo hóa đơn số {new_upsse_row[3]}", ten_mat_hang, static_data_hddt['ma_hang_map'].get(ten_mat_hang, '')
-            new_upsse_row[8], new_upsse_row[12] = _clean_string_hddt(bkhd_row[10]), round(_to_float_hddt(bkhd_row[8]), 3)
+            new_upsse_row[8], new_upsse_row[12] = _clean_string_hddt(bkhd_row[11]), round(_to_float_hddt(bkhd_row[9]), 3)
             phi_bvmt = static_data_hddt['phi_bvmt_map'].get(ten_mat_hang, 0.0) if is_petrol else 0.0
-            new_upsse_row[13] = _to_float_hddt(bkhd_row[9]) - phi_bvmt
-            ma_thue = _format_tax_code_hddt(bkhd_row[14])
+            new_upsse_row[13] = _to_float_hddt(bkhd_row[10]) - phi_bvmt
+            ma_thue = _format_tax_code_hddt(bkhd_row[15])
             new_upsse_row[17] = ma_thue
             thue_suat = _to_float_hddt(ma_thue) / 100.0 if ma_thue else 0.0
-            tien_thue_goc, so_luong = _to_float_hddt(bkhd_row[15]), _to_float_hddt(bkhd_row[8])
+            tien_thue_goc, so_luong = _to_float_hddt(bkhd_row[16]), _to_float_hddt(bkhd_row[9])
             tien_thue_phi_bvmt = round(phi_bvmt * so_luong * thue_suat)
             new_upsse_row[36] = round(tien_thue_goc - tien_thue_phi_bvmt)
-            new_upsse_row[14] = round(_to_float_hddt(bkhd_row[13]) if not is_petrol else _to_float_hddt(bkhd_row[16]) - tien_thue_goc - round(phi_bvmt * so_luong))
+            new_upsse_row[14] = round(_to_float_hddt(bkhd_row[14]) if not is_petrol else _to_float_hddt(bkhd_row[17]) - tien_thue_goc - round(phi_bvmt * so_luong))
             new_upsse_row[18], new_upsse_row[19], new_upsse_row[20], new_upsse_row[21] = tk_no, tk_doanh_thu, tk_gia_von, tk_thue_co
             chxd_vu_viec_map = static_data_hddt['vu_viec_map'].get(selected_chxd, {})
             new_upsse_row[23] = chxd_vu_viec_map.get(ten_mat_hang, chxd_vu_viec_map.get("Dầu mỡ nhờn", ''))
-            new_upsse_row[32], mst_khach_hang = _clean_string_hddt(bkhd_row[4]), _clean_string_hddt(bkhd_row[5])
+            new_upsse_row[32], mst_khach_hang = _clean_string_hddt(bkhd_row[5]), _clean_string_hddt(bkhd_row[6])
             new_upsse_row[33] = mst_khach_hang
             ma_kh_fast = _clean_string_hddt(bkhd_row[2])
             new_upsse_row[0] = ma_kh_fast if ma_kh_fast and len(ma_kh_fast) < 12 else static_data_hddt['mst_to_makh_map'].get(mst_khach_hang, ma_kho)
@@ -151,12 +151,12 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
             if is_petrol: bvmt_rows.append(_create_hddt_bvmt_row(new_upsse_row, phi_bvmt, static_data_hddt, khu_vuc))
         
         else:
-            if not first_invoice_prefix_source: first_invoice_prefix_source = str(bkhd_row[18] or '').strip()
+            if not first_invoice_prefix_source: first_invoice_prefix_source = str(bkhd_row[19] or '').strip()
             if ten_mat_hang not in summary_data:
-                summary_data[ten_mat_hang] = {'sl': 0, 'thue': 0, 'phai_thu': 0, 'first_data': {'mau_so': _clean_string_hddt(bkhd_row[17]),'ky_hieu': _clean_string_hddt(bkhd_row[18]),'don_gia': _to_float_hddt(bkhd_row[9]),'vat_raw': bkhd_row[14]}}
-            summary_data[ten_mat_hang]['sl'] += _to_float_hddt(bkhd_row[8])
-            summary_data[ten_mat_hang]['thue'] += _to_float_hddt(bkhd_row[15])
-            summary_data[ten_mat_hang]['phai_thu'] += _to_float_hddt(bkhd_row[16])
+                summary_data[ten_mat_hang] = {'sl': 0, 'thue': 0, 'phai_thu': 0, 'first_data': {'mau_so': _clean_string_hddt(bkhd_row[18]),'ky_hieu': _clean_string_hddt(bkhd_row[19]),'don_gia': _to_float_hddt(bkhd_row[10]),'vat_raw': bkhd_row[15]}}
+            summary_data[ten_mat_hang]['sl'] += _to_float_hddt(bkhd_row[9])
+            summary_data[ten_mat_hang]['thue'] += _to_float_hddt(bkhd_row[16])
+            summary_data[ten_mat_hang]['phai_thu'] += _to_float_hddt(bkhd_row[17])
     
     prefix = first_invoice_prefix_source[-2:] if len(first_invoice_prefix_source) >= 2 else first_invoice_prefix_source
     for product, data in summary_data.items():
@@ -244,15 +244,15 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
     
     max_rows_to_check = min(bkhd_ws.max_row, 100)
     for row_index, row_values in enumerate(bkhd_ws.iter_rows(min_row=11, max_row=max_rows_to_check, values_only=True), start=11):
-        quantity_val = _to_float_hddt(row_values[8] if len(row_values) > 8 else None)
+        quantity_val = _to_float_hddt(row_values[9] if len(row_values) > 9 else None)
         
         if quantity_val <= 0:
             continue
 
         has_at_least_one_valid_invoice_for_symbol_check = True
 
-        if len(row_values) > 18 and row_values[18] is not None:
-            actual_invoice_symbol_hddt = _clean_string_hddt(row_values[18])
+        if len(row_values) > 19 and row_values[19] is not None:
+            actual_invoice_symbol_hddt = _clean_string_hddt(row_values[19])
             if len(actual_invoice_symbol_hddt) >= 6:
                 if actual_invoice_symbol_hddt[-6:].upper() != expected_invoice_symbol_suffix:
                     raise ValueError("Bảng kê HĐĐT không phải của cửa hàng bạn chọn.")
@@ -270,9 +270,9 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
     else:
         unique_dates = set()
         for row in bkhd_ws.iter_rows(min_row=11, values_only=True):
-            quantity_val = _to_float_hddt(row[8] if len(row) > 8 else None)
+            quantity_val = _to_float_hddt(row[9] if len(row) > 9 else None)
             if quantity_val > 0:
-                date_val_from_cell = row[20] if len(row) > 20 else None
+                date_val_from_cell = row[21] if len(row) > 21 else None
                 parsed_date = _parse_date_from_excel_cell(date_val_from_cell)
                 if parsed_date:
                     unique_dates.add(parsed_date)
@@ -332,7 +332,7 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
         if not new_price_invoice_number: raise ValueError("Vui lòng nhập 'Số hóa đơn đầu tiên của giá mới'.")
         split_index = -1
         for i, row in enumerate(all_rows):
-            if str(row[19] or '').strip() == new_price_invoice_number:
+            if str(row[20] or '').strip() == new_price_invoice_number:
                 split_index = i
                 break
         

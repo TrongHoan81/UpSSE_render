@@ -145,9 +145,9 @@ def _extract_report_date_for_filename(file_bytes: bytes, report_type: str, confi
             ws = wb.active
             unique_dates = set()
             for row in ws.iter_rows(min_row=11, values_only=True):
-                qty = _to_float_app(row[8] if len(row) > 8 else None)
+                qty = _to_float_app(row[9] if len(row) > 9 else None)
                 if qty > 0:
-                    dt = _parse_date_like_hddt(row[20] if len(row) > 20 else None)
+                    dt = _parse_date_like_hddt(row[21] if len(row) > 21 else None)
                     if dt:
                         unique_dates.add(dt)
             wb.close()
