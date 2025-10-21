@@ -127,7 +127,13 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
             new_upsse_row = [''] * 37
             new_upsse_row[9], new_upsse_row[1], new_upsse_row[31], new_upsse_row[2] = ma_kho, ten_kh, ten_kh, final_date
             so_hd_goc = str(bkhd_row[20] or '').strip()
-            new_upsse_row[3] = f"HN{so_hd_goc[-6:]}" if selected_chxd == "Nguyễn Huệ" else f"{(str(bkhd_row[19] or '').strip())[-2:]}{so_hd_goc[-6:]}"
+
+            # --- LOGIC MỚI: SỐ HÓA ĐƠN CHO HÓA ĐƠN ĐỊNH DANH ---
+            ky_hieu_str = str(bkhd_row[19] or '').strip()
+            yy = ky_hieu_str[1:3] if len(ky_hieu_str) >= 3 else ''
+            old_prefix = 'HN' if selected_chxd == 'Nguyễn Huệ' else ky_hieu_str[-2:]
+            new_upsse_row[3] = f"{yy}{old_prefix}{so_hd_goc[-6:]}"
+
             new_upsse_row[4] = _clean_string_hddt(bkhd_row[18]) + _clean_string_hddt(bkhd_row[19])
             new_upsse_row[5], new_upsse_row[7], new_upsse_row[6] = f"Xuất bán hàng theo hóa đơn số {new_upsse_row[3]}", ten_mat_hang, static_data_hddt['ma_hang_map'].get(ten_mat_hang, '')
             new_upsse_row[8], new_upsse_row[12] = _clean_string_hddt(bkhd_row[11]), round(_to_float_hddt(bkhd_row[9]), 3)
@@ -177,9 +183,12 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
         
         summary_row[0], summary_row[1] = ma_kho, f"Khách hàng mua {product} không lấy hóa đơn"
         summary_row[31], summary_row[2] = summary_row[1], final_date
-        # --- LOGIC TẠO SỐ HÓA ĐƠN TỔNG HỢP (KHÔNG THAY ĐỔI) ---
-        # Sử dụng `summary_suffix_map` được truyền vào, đã được tạo linh động từ trước
-        summary_row[3] = f"{prefix}BK.{final_date.strftime('%d.%m')}.{summary_suffix_map.get(product, '')}"
+
+        # --- LOGIC MỚI: SỐ HÓA ĐƠN CHO HÓA ĐƠN TỔNG (VÃNG LAI) ---
+        ky_hieu_any = str(first_data.get('ky_hieu', '') or '').strip()
+        yy_vl = ky_hieu_any[1:3] if len(ky_hieu_any) >= 3 else ''
+        summary_row[3] = f"{prefix}{yy_vl}.{final_date.strftime('%d.%m')}.{summary_suffix_map.get(product, '')}"
+
         summary_row[4] = first_data['mau_so'] + first_data['ky_hieu']
         summary_row[5] = f"Xuất bán hàng theo hóa đơn số {summary_row[3]}"
         summary_row[7], summary_row[6], summary_row[8], summary_row[9] = product, static_data_hddt['ma_hang_map'].get(product, ''), "Lít", ma_kho
