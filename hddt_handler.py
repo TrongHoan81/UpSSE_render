@@ -110,6 +110,8 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
         return output_buffer
 
     khu_vuc, ma_kho = static_data_hddt['chxd_to_khuvuc_map'].get(selected_chxd), static_data_hddt['tk_mk'].get(selected_chxd)
+    # THÊM: lấy "Mã khách CHXD" từ cấu hình
+    ma_khach_chxd = static_data_hddt.get('chxd_makh_map', {}).get(selected_chxd)
     tk_no, tk_doanh_thu, tk_gia_von, tk_thue_co = static_data_hddt['tk_no_map'].get(khu_vuc), static_data_hddt['tk_doanh_thu_map'].get(khu_vuc), static_data_hddt['tk_gia_von_value'], static_data_hddt['tk_thue_co_map'].get(khu_vuc)
     original_invoice_rows, bvmt_rows, summary_data = [], [], {}
     first_invoice_prefix_source = ""
@@ -152,7 +154,8 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
             new_upsse_row[32], mst_khach_hang = _clean_string_hddt(bkhd_row[5]), _clean_string_hddt(bkhd_row[6])
             new_upsse_row[33] = mst_khach_hang
             ma_kh_fast = _clean_string_hddt(bkhd_row[2])
-            new_upsse_row[0] = ma_kh_fast if ma_kh_fast and len(ma_kh_fast) < 12 else static_data_hddt['mst_to_makh_map'].get(mst_khach_hang, ma_kho)
+            # ĐỔI FALLBACK CUỐI: dùng "Mã khách CHXD" thay vì "ma_kho"
+            new_upsse_row[0] = ma_kh_fast if ma_kh_fast and len(ma_kh_fast) < 12 else static_data_hddt['mst_to_makh_map'].get(mst_khach_hang, ma_khach_chxd)
             original_invoice_rows.append(new_upsse_row)
             if is_petrol: bvmt_rows.append(_create_hddt_bvmt_row(new_upsse_row, phi_bvmt, static_data_hddt, khu_vuc))
         
@@ -181,7 +184,8 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
         tien_thue_dong_goc = total_tien_thue_gtgt - tien_thue_dong_bvmt
         tien_hang_dong_goc = total_phai_thu - tien_hang_dong_bvmt - tien_thue_dong_bvmt - tien_thue_dong_goc
         
-        summary_row[0], summary_row[1] = ma_kho, f"Khách hàng mua {product} không lấy hóa đơn"
+        # ĐỔI: cột A cho vãng lai dùng "Mã khách CHXD"
+        summary_row[0], summary_row[1] = (ma_khach_chxd or ''), f"Khách hàng mua {product} không lấy hóa đơn"
         summary_row[31], summary_row[2] = summary_row[1], final_date
 
         # --- LOGIC MỚI: SỐ HÓA ĐƠN CHO HÓA ĐƠN TỔNG (VÃNG LAI) ---

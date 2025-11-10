@@ -200,6 +200,8 @@ def load_all_static_config_data():
         khhd_map_hddt = {}
         chxd_to_khuvuc_map_hddt = {}
         vu_viec_map_hddt = {}
+        # THÊM: map "Mã khách CHXD" đọc từ cột M
+        chxd_makh_map_hddt = {}
 
         vu_viec_headers = [_clean_string_app(cell.value) for cell in ws_hddt[2][4:9]]
 
@@ -230,6 +232,8 @@ def load_all_static_config_data():
                     ma_kho = _clean_string_app(row_values[9])
                     khhd = _clean_string_app(row_values[10])
                     khu_vuc = _clean_string_app(row_values[11])
+                    # THÊM: đọc "Mã khách CHXD" từ cột M (index 12 nếu tồn tại)
+                    ma_khach_chxd = _clean_string_app(row_values[12]) if len(row_values) > 12 else ''
 
                     if ma_kho:
                         tk_mk_map_hddt[chxd_name] = ma_kho
@@ -237,6 +241,9 @@ def load_all_static_config_data():
                         khhd_map_hddt[chxd_name] = khhd
                     if khu_vuc:
                         chxd_to_khuvuc_map_hddt[chxd_name] = khu_vuc
+                    # THÊM: lưu "Mã khách CHXD" nếu có
+                    if ma_khach_chxd:
+                        chxd_makh_map_hddt[chxd_name] = ma_khach_chxd
 
                     vu_viec_map_hddt[chxd_name] = {}
                     vu_viec_data_row = row_values[4:9]
@@ -290,7 +297,9 @@ def load_all_static_config_data():
             "tk_no_bvmt_map": get_lookup_hddt_config(44, 46),
             "tk_dt_thue_bvmt_map": get_lookup_hddt_config(48, 50),
             "tk_gia_von_bvmt_value": ws_hddt['B51'].value,
-            "tk_thue_co_bvmt_map": get_lookup_hddt_config(53, 55)
+            "tk_thue_co_bvmt_map": get_lookup_hddt_config(53, 55),
+            # THÊM: map "Mã khách CHXD" phục vụ fallback cuối cho HĐĐT
+            "chxd_makh_map": chxd_makh_map_hddt
         }
         wb_hddt.close()
 
