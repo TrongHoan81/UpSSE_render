@@ -141,9 +141,18 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
             new_upsse_row[8], new_upsse_row[12] = _clean_string_hddt(bkhd_row[11]), round(_to_float_hddt(bkhd_row[9]), 3)
             phi_bvmt = static_data_hddt['phi_bvmt_map'].get(ten_mat_hang, 0.0) if is_petrol else 0.0
             new_upsse_row[13] = _to_float_hddt(bkhd_row[10]) - phi_bvmt
-            ma_thue = _format_tax_code_hddt(bkhd_row[15])
+            
+            # --- LUẬT 1: KIỂM TRA MÃ THUẾ KKKNT ---
+            raw_vat = str(bkhd_row[15] or '').strip().upper()
+            if raw_vat == 'KKKNT':
+                ma_thue = 'KKKNT'
+                thue_suat = 0.0
+            else:
+                ma_thue = _format_tax_code_hddt(bkhd_row[15])
+                thue_suat = _to_float_hddt(ma_thue) / 100.0 if ma_thue else 0.0
+                
             new_upsse_row[17] = ma_thue
-            thue_suat = _to_float_hddt(ma_thue) / 100.0 if ma_thue else 0.0
+            
             tien_thue_goc, so_luong = _to_float_hddt(bkhd_row[16]), _to_float_hddt(bkhd_row[9])
             tien_thue_phi_bvmt = round(phi_bvmt * so_luong * thue_suat)
             new_upsse_row[36] = round(tien_thue_goc - tien_thue_phi_bvmt)
@@ -157,7 +166,10 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
             # ĐỔI FALLBACK CUỐI: dùng "Mã khách CHXD" thay vì "ma_kho"
             new_upsse_row[0] = ma_kh_fast if ma_kh_fast and len(ma_kh_fast) < 12 else static_data_hddt['mst_to_makh_map'].get(mst_khach_hang, ma_khach_chxd)
             original_invoice_rows.append(new_upsse_row)
-            if is_petrol: bvmt_rows.append(_create_hddt_bvmt_row(new_upsse_row, phi_bvmt, static_data_hddt, khu_vuc))
+            
+            # --- LUẬT 2: KHÔNG TẠO DÒNG BVMT NẾU PHÍ = 0 ---
+            if is_petrol and phi_bvmt > 0: 
+                bvmt_rows.append(_create_hddt_bvmt_row(new_upsse_row, phi_bvmt, static_data_hddt, khu_vuc))
         
         else:
             if not first_invoice_prefix_source: first_invoice_prefix_source = str(bkhd_row[19] or '').strip()
@@ -176,8 +188,15 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
         total_tien_thue_gtgt = data['thue']
         total_so_luong = data['sl']
         phi_bvmt_unit = static_data_hddt['phi_bvmt_map'].get(product, 0.0)
-        ma_thue_str = _format_tax_code_hddt(first_data['vat_raw'])
-        thue_suat = _to_float_hddt(ma_thue_str) / 100.0 if ma_thue_str else 0.0
+        
+        # --- LUẬT 1: KIỂM TRA MÃ THUẾ KKKNT CHO HÓA ĐƠN TỔNG ---
+        raw_vat_summary = str(first_data.get('vat_raw') or '').strip().upper()
+        if raw_vat_summary == 'KKKNT':
+            ma_thue_str = 'KKKNT'
+            thue_suat = 0.0
+        else:
+            ma_thue_str = _format_tax_code_hddt(first_data['vat_raw'])
+            thue_suat = _to_float_hddt(ma_thue_str) / 100.0 if ma_thue_str else 0.0
 
         tien_hang_dong_bvmt = round(phi_bvmt_unit * total_so_luong)
         tien_thue_dong_bvmt = round(tien_hang_dong_bvmt * thue_suat)
@@ -205,17 +224,19 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
         summary_row[23] = static_data_hddt['vu_viec_map'].get(selected_chxd, {}).get(product, '')
         original_invoice_rows.append(summary_row)
         
-        bvmt_summary_row = list(summary_row)
-        bvmt_summary_row[6], bvmt_summary_row[7] = "TMT", "Thuế bảo vệ môi trường"
-        bvmt_summary_row[13] = phi_bvmt_unit
-        bvmt_summary_row[18] = static_data_hddt.get('tk_no_bvmt_map', {}).get(khu_vuc)
-        bvmt_summary_row[19] = static_data_hddt.get('tk_dt_thue_bvmt_map', {}).get(khu_vuc)
-        bvmt_summary_row[20] = static_data_hddt.get('tk_gia_von_bvmt_value')
-        bvmt_summary_row[21] = static_data_hddt.get('tk_thue_co_bvmt_map', {}).get(khu_vuc)
-        bvmt_summary_row[14] = tien_hang_dong_bvmt
-        bvmt_summary_row[36] = tien_thue_dong_bvmt
-        for i in [5, 31, 32, 33]: bvmt_summary_row[i] = ''
-        bvmt_rows.append(bvmt_summary_row)
+        # --- LUẬT 2: KHÔNG TẠO DÒNG BVMT TỔNG NẾU PHÍ = 0 ---
+        if phi_bvmt_unit > 0:
+            bvmt_summary_row = list(summary_row)
+            bvmt_summary_row[6], bvmt_summary_row[7] = "TMT", "Thuế bảo vệ môi trường"
+            bvmt_summary_row[13] = phi_bvmt_unit
+            bvmt_summary_row[18] = static_data_hddt.get('tk_no_bvmt_map', {}).get(khu_vuc)
+            bvmt_summary_row[19] = static_data_hddt.get('tk_dt_thue_bvmt_map', {}).get(khu_vuc)
+            bvmt_summary_row[20] = static_data_hddt.get('tk_gia_von_bvmt_value')
+            bvmt_summary_row[21] = static_data_hddt.get('tk_thue_co_bvmt_map', {}).get(khu_vuc)
+            bvmt_summary_row[14] = tien_hang_dong_bvmt
+            bvmt_summary_row[36] = tien_thue_dong_bvmt
+            for i in [5, 31, 32, 33]: bvmt_summary_row[i] = ''
+            bvmt_rows.append(bvmt_summary_row)
     
     for row_data in original_invoice_rows + bvmt_rows:
         ws.append(row_data)
@@ -319,23 +340,16 @@ def process_hddt_report(file_content_bytes, selected_chxd, price_periods, new_pr
     all_rows = list(bkhd_ws.iter_rows(min_row=11, values_only=True))
     print(f"DEBUG: Tổng số dòng đọc được từ file Excel: {len(all_rows)}")
 
-    # --- START: LOGIC CẬP NHẬT ---
     # Lấy danh sách mặt hàng xăng dầu từ dữ liệu cấu hình
     petroleum_products = static_data_hddt.get("petroleum_products", [])
     if not petroleum_products:
         print("WARNING: Không tìm thấy mặt hàng nào được đánh dấu là 'Xăng dầu' trong file MaHH.xlsx.")
 
-    # Tạo suffix map một cách linh động
-    # Hậu tố cho giai đoạn giá cũ sẽ bắt đầu từ 1
     suffix_map_old = {product: str(i + 1) for i, product in enumerate(petroleum_products)}
     
-    # Hậu tố cho giai đoạn giá mới sẽ bắt đầu từ số lượng mặt hàng + 1
-    # Ví dụ: có 4 mặt hàng, giá mới sẽ bắt đầu từ 5.
-    # Thêm một khoảng đệm nhỏ để dễ phân biệt, ví dụ làm tròn lên 5.
     new_price_start_index = len(petroleum_products) + 1
-    if new_price_start_index < 5: new_price_start_index = 5 # Đảm bảo bắt đầu ít nhất từ 5
+    if new_price_start_index < 5: new_price_start_index = 5 
     suffix_map_new = {product: str(i + new_price_start_index) for i, product in enumerate(petroleum_products)}
-    # --- END: LOGIC CẬP NHẬT ---
 
     if price_periods == '1':
         print(f"DEBUG: Xử lý 1 giai đoạn giá. Suffix map: {suffix_map_old}")
