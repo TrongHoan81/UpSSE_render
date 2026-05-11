@@ -203,7 +203,7 @@ def load_all_static_config_data():
         # THÊM: map "Mã khách CHXD" đọc từ cột M
         chxd_makh_map_hddt = {}
 
-        vu_viec_headers = [_clean_string_app(cell.value) for cell in ws_hddt[2][4:9]]
+        vu_viec_headers = [_clean_string_app(cell.value) for cell in ws_hddt[2][4:10]]
 
         for row_idx in range(3, ws_hddt.max_row + 1):
             row_values = [cell.value for cell in ws_hddt[row_idx]]
@@ -213,9 +213,9 @@ def load_all_static_config_data():
                 if chxd_name:
                     # For POS handler
                     chxd_detail_map_pos[chxd_name] = {
-                        'g5_val': row_values[9],
-                        'h5_val': _clean_string_app(row_values[11]).lower(),
-                        'f5_val_full': _clean_string_app(row_values[10]),
+                        'g5_val': row_values[10],
+                        'h5_val': _clean_string_app(row_values[12]).lower(),
+                        'f5_val_full': _clean_string_app(row_values[11]),
                         'b5_val': chxd_name
                     }
                     store_specific_x_lookup_pos[chxd_name] = {
@@ -229,11 +229,11 @@ def load_all_static_config_data():
                     if chxd_name not in chxd_list_for_hddt:
                         chxd_list_for_hddt.append(chxd_name)
 
-                    ma_kho = _clean_string_app(row_values[9])
-                    khhd = _clean_string_app(row_values[10])
-                    khu_vuc = _clean_string_app(row_values[11])
-                    # THÊM: đọc "Mã khách CHXD" từ cột M (index 12 nếu tồn tại)
-                    ma_khach_chxd = _clean_string_app(row_values[12]) if len(row_values) > 12 else ''
+                    ma_kho = _clean_string_app(row_values[10])
+                    khhd = _clean_string_app(row_values[11])
+                    khu_vuc = _clean_string_app(row_values[12])
+                    # THÊM: đọc "Mã khách CHXD" từ cột N (index 13 nếu tồn tại)
+                    ma_khach_chxd = _clean_string_app(row_values[13]) if len(row_values) > 13 else ''
 
                     if ma_kho:
                         tk_mk_map_hddt[chxd_name] = ma_kho
@@ -246,7 +246,7 @@ def load_all_static_config_data():
                         chxd_makh_map_hddt[chxd_name] = ma_khach_chxd
 
                     vu_viec_map_hddt[chxd_name] = {}
-                    vu_viec_data_row = row_values[4:9]
+                    vu_viec_data_row = row_values[4:10]
                     for i, header in enumerate(vu_viec_headers):
                         if header:
                             key = "Dầu mỡ nhờn" if i == len(vu_viec_headers) - 1 else header
@@ -259,7 +259,7 @@ def load_all_static_config_data():
                 if row[0] and row[1] is not None
             }
 
-        tmt_lookup_table_pos = {k: _to_float_app(v) for k, v in get_lookup_pos_config(10, 13).items()}
+        tmt_lookup_table_pos = {k: _to_float_app(v) for k, v in get_lookup_pos_config(10, 14).items()}
 
         static_data['pos_config'] = {
             "lookup_table": get_lookup_pos_config(4, 7),
@@ -280,7 +280,7 @@ def load_all_static_config_data():
                 if row[0] and row[1] is not None
             }
 
-        phi_bvmt_map_raw = get_lookup_hddt_config(10, 13)
+        phi_bvmt_map_raw = get_lookup_hddt_config(10, 14)
         phi_bvmt_map_hddt = {_clean_string_app(k): _to_float_app(v) for k, v in phi_bvmt_map_raw.items()}
 
         static_data['hddt_config'] = {
