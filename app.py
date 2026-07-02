@@ -429,6 +429,12 @@ def process():
             flash(f"Không tìm thấy ký hiệu hóa đơn cho CHXD '{form_data['selected_chxd']}'. Vui lòng kiểm tra file cấu hình Data_HDDT.xlsx.", 'danger')
             return redirect(url_for('index', active_tab='upsse'))
 
+        # =========================================================================
+        # CHỐT CHẶN: TẠM KHÓA CHỨC NĂNG TẢI FILE (RAISE LỖI ĐỂ HIỆN THÔNG BÁO)
+        # =========================================================================
+        raise ValueError("Có lỗi trong thuật toán xử lý hóa đơn. Vui lòng kiểm tra lại!")
+        # =========================================================================
+
         # Gọi handler tạo dữ liệu như cũ (KHÔNG ĐỔI THUẬT TOÁN)
         if report_type == 'POS':
             result = process_pos_report(
