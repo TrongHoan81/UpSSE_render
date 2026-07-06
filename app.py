@@ -52,7 +52,7 @@ def format_currency_filter(value):
         return "0"
 
 # =========================
-#   HÀM PHỤ CHO TÊN FILE
+#   HÀM PHỤ CHO TÊN FILE .
 # =========================
 
 def _sanitize_filename_piece(s: str) -> str:
