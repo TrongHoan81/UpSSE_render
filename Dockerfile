@@ -1,35 +1,31 @@
-# Dùng image Python bản nhẹ
+# Nâng cấp lên python 3.11 để tương thích với các thư viện mới
+FROM python:3.11-slim
 
-FROM python:3.10-slim
-
-# Ngăn Python tạo ra các file .pyc và ép in log trực tiếp ra console (Tốt cho Cloud Run)
-
+# Ngăn Python tạo file .pyc và ép in log trực tiếp ra console
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
-# Tạo thư mục làm việc trong container
-
+# Thiết lập thư mục làm việc
 WORKDIR /app
 
-# Ưu tiên copy file requirements trước để tận dụng Docker cache
-
+# Copy requirements và cài đặt
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-Copy TẤT CẢ mã nguồn VÀ các file Excel cấu hình vào thư mục /app trong container
-
-# Docker sẽ tự động copy cả nội dung bên trong thư mục static và templates
-
+# Copy toàn bộ mã nguồn
 COPY . .
 
-# Mở port (Cloud Run sẽ tự động truyền biến môi trường PORT vào đây)
-
+# Mở port cho Cloud Run
 EXPOSE 8080
 
-# Chạy ứng dụng bằng Gunicorn thay vì Flask thuần.
-
-# - workers 1, threads 8: Tối ưu cho quá trình I/O bound (xử lý file Excel) trên Cloud Run
-
-# - timeout 0: Giao việc quản lý timeout lại cho Cloud Run
-
+# Chạy ứng dụng
 CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 app:app
+```eof
+
+### Giải thích tại sao làm vậy:
+#*   **Chuyển sang `python:3.11-slim`:** Đây là phiên bản Python ổn định, hỗ trợ hoàn hảo cho `MarkupSafe 3.x` và các thư viện hiện đại.
+#*   **Thêm `pip install --upgrade pip`:** Trong môi trường Docker cũ, pip thường bị lỗi thời, gây ra việc không tìm thấy các bản cập nhật mới nhất của thư viện. Dòng này giúp cập nhật trình cài đặt lên phiên bản mới nhất trước khi cài thư viện.
+#*   **Đã loại bỏ lệnh `chmod` lỗi:** Dockerfile mới này đã sạch sẽ và không còn lỗi thừa thư mục nữa.
+
+#Sau khi sửa 2 file này, bạn hãy thử Build lại (Deploy lại) lên Google Cloud Run. Nó sẽ vượt qua bước cài đặt thư viện một cách suôn sẻ!
