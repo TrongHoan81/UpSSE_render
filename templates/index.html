@@ -159,6 +159,14 @@
             const initialPricePeriods = "{{ form_data.price_periods if form_data.price_periods is defined else '1' }}";
             const initialInvoiceNumber = "{{ form_data.invoice_number if form_data.invoice_number is defined else '' }}";
 
+            // Tự động kích hoạt tải xuống từ route /download nếu trigger_download khả dụng
+            const triggerDownload = {{ 'true' if trigger_download is defined and trigger_download else 'false' }};
+            if (triggerDownload) {
+                setTimeout(function() {
+                    window.location.href = "{{ url_for('download') }}";
+                }, 300);
+            }
+
             // Hàm phát hiện loại báo cáo Excel ở phía client
             function detectExcelReportType(arrayBuffer) {
                 try {

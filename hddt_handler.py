@@ -1,16 +1,18 @@
 import io
 import re
+import unicodedata
 from datetime import datetime
 import pandas as pd
 from openpyxl import load_workbook, Workbook
 
 # --- Các hàm tiện ích nội bộ ---
 def _clean_string_hddt(s):
-    """Làm sạch chuỗi, loại bỏ khoảng trắng thừa và ký tự '."""
+    """Làm sạch chuỗi, loại bỏ khoảng trắng thừa, ký tự ' và chuẩn hóa tiếng Việt NFC."""
     if s is None: return ""
     cleaned_s = str(s).strip()
     if cleaned_s.startswith("'"): cleaned_s = cleaned_s[1:]
-    return re.sub(r'\s+', ' ', cleaned_s)
+    cleaned_s = re.sub(r'\s+', ' ', cleaned_s)
+    return unicodedata.normalize('NFC', cleaned_s)
 
 def _to_float_hddt(value):
     """Chuyển đổi giá trị sang float, xử lý các trường hợp lỗi."""
@@ -190,7 +192,7 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
         total_so_luong = data['sl']
         phi_bvmt_unit = static_data_hddt['phi_bvmt_map'].get(product, 0.0)
         
-        # --- LUẬT 1: KIỂM TRA MÃ THUẾ KKKNT CHO HÓA ĐƠN TỔNG ---
+        # --- LUẬT 1: KIỂM TRA MÃ THUẾ KKKNT CHO HÓD ĐƠN TỔNG ---
         raw_vat_summary = str(first_data.get('vat_raw') or '').strip().upper()
         if raw_vat_summary == 'KKKNT':
             ma_thue_str = 'KKKNT'
