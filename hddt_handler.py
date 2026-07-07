@@ -123,7 +123,8 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
         
         processed_row_count += 1
         ten_kh, ten_mat_hang = _clean_string_hddt(bkhd_row[4]), _clean_string_hddt(bkhd_row[7])
-        is_anonymous, is_petrol = ("không lấy hóa đơn" in ten_kh.lower()), (ten_mat_hang in static_data_hddt['phi_bvmt_map'])
+        is_anonymous = ("bán cho người tiêu dùng" in ten_kh.lower()) or ("không lấy hóa đơn" in ten_kh.lower())
+        is_petrol = (ten_mat_hang in static_data_hddt['phi_bvmt_map'])
         
         if not is_anonymous or not is_petrol:
             new_upsse_row = [''] * 37
@@ -204,7 +205,7 @@ def _generate_upsse_from_hddt_rows(rows_to_process, static_data_hddt, selected_c
         tien_hang_dong_goc = total_phai_thu - tien_hang_dong_bvmt - tien_thue_dong_bvmt - tien_thue_dong_goc
         
         # ĐỔI: cột A cho vãng lai dùng "Mã khách CHXD"
-        summary_row[0], summary_row[1] = (ma_khach_chxd or ''), f"Khách hàng mua {product} không lấy hóa đơn"
+        summary_row[0], summary_row[1] = (ma_khach_chxd or ''), f"Bán {product} cho người tiêu dùng"
         summary_row[31], summary_row[2] = summary_row[1], final_date
 
         # --- LOGIC MỚI: SỐ HÓA ĐƠN CHO HÓA ĐƠN TỔNG (VÃNG LAI) ---
